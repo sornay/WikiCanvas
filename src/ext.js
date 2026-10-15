@@ -117,7 +117,7 @@
   boot();
 
   function boot() {
-    const state = { x: 0, y: 0, zoom: 1, cards: [], trails: [], notes: [], z: 10, nextId: 1, linkDrag: null, dots: true, inkZoom: 1, inkTimer: 0, full: null, sel: null, fullNotes: true, hlColor: 'yellow' };
+    const state = { x: 0, y: 0, zoom: 1, cards: [], trails: [], notes: [], z: 10, nextId: 1, linkDrag: null, dots: true, inkZoom: 1, inkTimer: 0, full: null, sel: null, fullNotes: true, hlColor: 'yellow', fullSideW: 0 };
     const cardByEl = new WeakMap();
     const keyOf = (t) => t.replace(/_/g, ' ').trim().toLowerCase();
 
@@ -203,6 +203,9 @@
         <button data-act="fit" title="Fit everything in view">Fit</button>
         <button data-act="minall" title="Minimize / expand every card">Minimize all</button>
         <button data-act="closeall" title="Close every card and text box">Close all</button>
+        <button data-act="export" title="Export this canvas to a file">Export</button>
+        <button data-act="import" title="Import a canvas file">Import</button>
+        <button data-act="full" title="Fullscreen (F11)">⛶</button>
         <button data-act="off" title="Quit Wiki Canvas">Quit</button>
       </div>
       <div class="wc-viewport">
@@ -222,6 +225,7 @@
         </header>
         <div class="wc-full-main">
           <div class="wc-full-article"></div>
+          <div class="wc-full-div" hidden title="Drag to resize notes"></div>
           <div class="wc-full-side"></div>
         </div>
       </div>
@@ -251,6 +255,7 @@
     const fullNotesBtn = root.querySelector('.wc-full-notes');
     const fullMain = root.querySelector('.wc-full-main');
     const fullArticle = root.querySelector('.wc-full-article');
+    const fullDiv = root.querySelector('.wc-full-div');
     const fullSide = root.querySelector('.wc-full-side');
     const selBar = root.querySelector('.wc-selbar');
     const ctxMenu = root.querySelector('.wc-ctx');
@@ -346,12 +351,23 @@
       const sel0 = window.getSelection();
       if (sel0) sel0.removeAllRanges();                        // and drop any existing selection
       const sx = e.clientX, sy = e.clientY, ox = state.x, oy = state.y;
-      const mv = (ev) => { state.x = ox + ev.clientX - sx; state.y = oy + ev.clientY - sy; applyView(); };
+      let panAnim = 0, px = sx, py = sy;
+      setFast(true);
+      const step = () => {
+        panAnim = 0;
+        state.x = ox + px - sx; state.y = oy + py - sy;
+        applyView();
+      };
+      const mv = (ev) => { px = ev.clientX; py = ev.clientY; if (!panAnim) panAnim = requestAnimationFrame(step); };
       const up = (ev) => {
+        if (panAnim) { cancelAnimationFrame(panAnim); panAnim = 0; }
         vp.removeEventListener('pointermove', mv);
         vp.removeEventListener('pointerup', up);
         vp.removeEventListener('pointercancel', up);
         root.classList.remove('wc-panning');
+        setFast(false);
+        state.x = ox + ev.clientX - sx; state.y = oy + ev.clientY - sy;
+        applyView();
         try { vp.releasePointerCapture(ev.pointerId); } catch { /* ignore */ }
       };
       vp.addEventListener('pointermove', mv);
@@ -385,6 +401,52 @@
     // ---------- trails ----------
     let raf = 0;
     const queueTrails = () => { if (!raf) raf = requestAnimationFrame(updateTrails); };
+    // fast path: only trails touching the given card (used while dragging it)
+    let trailRaf = 0;
+    const dirtyTrails = new Set();
+    function queueTrailsFor(c) {
+      state.trails.forEach((t) => { if (t.parent === c || t.child === c) dirtyTrails.add(t); });
+      if (!trailRaf && dirtyTrails.size) trailRaf = requestAnimationFrame(updateDirtyTrails);
+    }
+    function updateDirtyTrails() {
+      trailRaf = 0;
+      if (!dirtyTrails.size) return;
+      const cards = new Set();
+      dirtyTrails.forEach((t) => { cards.add(t.parent); cards.add(t.child); });
+      const rects = new Map();
+      cards.forEach((c) => rects.set(c, rectOf(c)));
+      const seen = new Map();
+      for (const t of state.trails) {
+        const pk = t.parent.uid + '>' + t.child.uid;
+        const idx = seen.get(pk) || 0;
+        seen.set(pk, idx + 1);
+        if (!dirtyTrails.has(t)) continue;
+        const pr = rects.get(t.parent), cr = rects.get(t.child);
+        const s = edgePoint(pr, cr.x + cr.w / 2, cr.y + cr.h / 2);
+        const e = edgePoint(cr, pr.x + pr.w / 2, pr.y + pr.h / 2);
+        const cv = curve(s, e);
+        t.path.setAttribute('d', cv.d);
+        t.d1.setAttribute('cx', s.x); t.d1.setAttribute('cy', s.y);
+        t.d2.setAttribute('cx', e.x); t.d2.setAttribute('cy', e.y);
+        t.label.style.left = cv.mid.x + 'px';
+        t.label.style.top = (cv.mid.y + idx * 24) + 'px';
+      }
+      dirtyTrails.clear();
+    }
+    function setFast(on) { root.classList.toggle('wc-fast', on); }
+    // move a card without layout reads (sizes are cached at drag start)
+    function moveCardTo(c, x, y) {
+      c.x = x; c.y = y;
+      c.el.style.left = x + 'px';
+      c.el.style.top = y + 'px';
+      if (c.padBox && c.pad && !c.pad.el.hidden) {
+        const pw = c._dragPadW || c.padBox.w;
+        const nx = c.pad.side === 'right' ? x + (c._dragW || c.el.offsetWidth) : x - pw;
+        c.pad.el.style.left = nx + 'px';
+        c.pad.el.style.top = y + 'px';
+        c.padBox = { x: nx, y, w: pw, h: c.padBox.h };
+      }
+    }
     // a card's box, widened to include its notes when they are open
     const rectOf = (c) => {
       const r = { x: c.x, y: c.y, w: c.el.offsetWidth, h: c.el.offsetHeight };
@@ -650,6 +712,7 @@
           <span class="wc-tools">
             <button class="wc-fullbtn" title="Open in full view (article + notes)">⤢</button>
             <button class="wc-padbtn" title="Notes: typed or handwritten notes for this article">✎</button>
+            <button class="wc-pageinkbtn" title="Handwrite on the article">✐</button>
             <button class="wc-minbtn" title="Minimize to a name">–</button>
             <a class="wc-ext" target="_blank" rel="noopener" title="Open on Wikipedia">↗</a>
             <button class="wc-close" title="Close (Shift+click: also close cards opened from it)">×</button>
@@ -687,6 +750,7 @@
         if (e.target.closest('.wc-close')) closeCard(c, e.shiftKey);
         else if (e.target.closest('.wc-fullbtn')) enterFull(c);
         else if (e.target.closest('.wc-padbtn')) togglePad(c);
+        else if (e.target.closest('.wc-pageinkbtn')) togglePageInk(c);
         else if (e.target.closest('.wc-minbtn')) setMin(c, !c.minimized);
       });
       c.head.addEventListener('pointerdown', (e) => {
@@ -694,22 +758,36 @@
         e.preventDefault();
         c.head.setPointerCapture(e.pointerId);
         const sx = e.clientX, sy = e.clientY, ox = c.x, oy = c.y;
-        let moved = false;
-        const mv = (ev) => {
-          const dx = ev.clientX - sx, dy = ev.clientY - sy;
+        c._dragW = c.el.offsetWidth;
+        if (c.padBox) c._dragPadW = c.padBox.w;
+        let moved = false, dragAnim = 0, px = sx, py = sy;
+        setFast(true);
+        c.el.classList.add('wc-drag');
+        const step = () => {
+          dragAnim = 0;
+          const dx = px - sx, dy = py - sy;
           if (!moved && Math.hypot(dx, dy) < 4) return;
           moved = true;
-          c.x = ox + dx / state.zoom;
-          c.y = oy + dy / state.zoom;
-          place(c);
-          queueTrails();
+          moveCardTo(c, ox + dx / state.zoom, oy + dy / state.zoom);
+          queueTrailsFor(c);
         };
+        const mv = (ev) => { px = ev.clientX; py = ev.clientY; if (!dragAnim) dragAnim = requestAnimationFrame(step); };
         const up = (ev) => {
+          if (dragAnim) { cancelAnimationFrame(dragAnim); dragAnim = 0; }
           c.head.removeEventListener('pointermove', mv);
           c.head.removeEventListener('pointerup', up);
           c.head.removeEventListener('pointercancel', up);
           try { c.head.releasePointerCapture(ev.pointerId); } catch { /* ignore */ }
-          if (!moved && c.minimized) setMin(c, false);
+          setFast(false);
+          c.el.classList.remove('wc-drag');
+          c._dragW = 0; c._dragPadW = 0;
+          const fdx = ev.clientX - sx, fdy = ev.clientY - sy;
+          if (Math.hypot(fdx, fdy) >= 4) moved = true;
+          if (moved) {
+            moveCardTo(c, ox + fdx / state.zoom, oy + fdy / state.zoom);
+            place(c);
+            queueTrails();
+          } else if (c.minimized) setMin(c, false);
         };
         c.head.addEventListener('pointermove', mv);
         c.head.addEventListener('pointerup', up);
@@ -893,6 +971,9 @@
           break;
         }
         case 'dots': setDots(!state.dots, true); break;
+        case 'export': exportCanvas(); break;
+        case 'import': importCanvasFile(); break;
+        case 'full': toggleFull(); break;
         case 'off': if (window.WCStore && WCStore.quit) WCStore.quit(); break;   // desktop: quit the app
       }
     });
@@ -945,6 +1026,7 @@
     input.addEventListener('blur', () => { results.hidden = true; });
 
     document.addEventListener('keydown', (e) => {
+      if (e.key === 'F11') { e.preventDefault(); toggleFull(); return; }
       if (e.key === 'Escape' && !pop.hidden) { closePicker(); return; }
       if (e.key === 'Escape' && (!selBar.hidden || !ctxMenu.hidden || !prevEl.hidden)) { hideSelUI(); hidePreview(); return; }
       if (e.key === 'Escape' && state.full) { exitFull(false); return; }
@@ -1297,22 +1379,24 @@
 
     // ---------- notes attached to a card: typed or handwritten, saved per article ----------
     const padKey = (c) => `pad:${WC_HOST()}:${c.canon || c.key}`;
-    const hasContent = (r) => !!r.text.trim() || r.ink.length > 0;
+    const hasContent = (r) => !!r.text.trim() || r.ink.length > 0 || (r.pageInk && r.pageInk.length > 0);
 
     // saved record -> {text, color, mode, ink}; older saves were just a string of text
     function normRec(v) {
-      const r = { text: '', color: 'yellow', mode: 'text', ink: [], refs: [], refSeq: 0, refsCollapsed: false };
+      const r = { text: '', color: 'yellow', mode: 'text', ink: [], pageInk: [], refs: [], refSeq: 0, refsCollapsed: false };
       if (typeof v === 'string') { r.text = v; return r; }
       if (v && typeof v === 'object') {
         if (typeof v.text === 'string') r.text = v.text;
         if (v.color in PAD_COLORS) r.color = v.color;
         if (v.mode === 'ink') r.mode = 'ink';
         if (Array.isArray(v.ink)) r.ink = v.ink.filter((st) => st && Array.isArray(st.p) && st.p.length >= 3);
+        if (Array.isArray(v.pageInk)) r.pageInk = v.pageInk.filter((st) => st && Array.isArray(st.p) && st.p.length >= 3);
         if (Array.isArray(v.refs)) r.refs = v.refs.filter((x) => x && typeof x.q === 'string' && typeof x.n === 'number');
         r.refs.forEach((x) => { if (!(x.color in HL_COLORS)) x.color = 'yellow'; });
         r.refSeq = Math.max(Number(v.refSeq) || 0, ...r.refs.map((x) => x.n), 0);
         if (v.refsCollapsed === true) r.refsCollapsed = true;
-        // earlier versions wrote “quote”⏎— Article › Section [n]; the number in front is enough, so tidy those blocks
+        // earlier versions wrote “quote”⏎— Article › Section [n], then [n] “quote”;
+        // the number now goes after the quote, so tidy those blocks
         // (only when they still match exactly what was generated: anything you edited is left alone)
         r.refs.forEach((x) => {
           const old = '“' + x.q + '”\n— ';
@@ -1321,12 +1405,20 @@
             const lineEnd = r.text.indexOf('\n', at + old.length);
             const end = lineEnd < 0 ? r.text.length : lineEnd;
             if (r.text.slice(at + old.length, end).endsWith(' [' + x.n + ']')) {
-              r.text = r.text.slice(0, at) + '[' + x.n + '] “' + x.q + '”' + r.text.slice(end);
+              r.text = r.text.slice(0, at) + '“' + x.q + '” [' + x.n + ']' + r.text.slice(end);
               r.migrated = true;
               break;
             }
             at = r.text.indexOf(old, at + 1);
           }
+          // exact generated “[n] “quote”” lines become “quote” [n]
+          const genOld = '[' + x.n + '] “' + x.q + '”';
+          const lines = r.text.split('\n');
+          let touched = false;
+          for (let i = 0; i < lines.length; i++) {
+            if (lines[i] === genOld) { lines[i] = '“' + x.q + '” [' + x.n + ']'; touched = true; }
+          }
+          if (touched) { r.text = lines.join('\n'); r.migrated = true; }
         });
       }
       return r;
@@ -1431,15 +1523,43 @@
       if (back) { p.rec.ink.push(back); renderInk(c); scheduleSave(c); }
     }
 
-    // the pointer is a dot the size of the pen (a ring the size of the eraser)
+    // distance from a point to a segment, in pad css px
+    function segDist(px, py, ax, ay, bx, by) {
+      const dx = bx - ax, dy = by - ay;
+      const len2 = dx * dx + dy * dy;
+      const t = clamp(len2 ? ((px - ax) * dx + (py - ay) * dy) / len2 : 0, 0, 1);
+      return Math.hypot(px - (ax + dx * t), py - (ay + dy * t));
+    }
+    // stroke eraser: remove every whole stroke passing near the point; true if anything went
+    function eraseStrokeAt(c, x, y) {
+      const p = c.pad;
+      if (!p) return false;
+      const keep = p.rec.ink.filter((st) => {
+        const pts = st.p, R = 8 + (st.w || 3);
+        for (let i = 0; i < pts.length; i += 3) {
+          const ax = pts[i], ay = pts[i + 1];
+          const bx = (i + 3 < pts.length) ? pts[i + 3] : ax;
+          const by = (i + 4 < pts.length) ? pts[i + 4] : ay;
+          if (segDist(x, y, ax, ay, bx, by) < R) return false;
+        }
+        return true;
+      });
+      if (keep.length === p.rec.ink.length) return false;
+      p.rec.ink = keep;
+      p.redo = [];
+      return true;
+    }
+
+    // the pointer is a dot the size of the pen (a ring for either eraser)
     function brushStyle(c) {
       const p = c.pad;
       if (!p || !p.brush) return;
-      const d = Math.max(3, p.tool === 'eraser' ? p.width * 5 : p.width);
+      const erasing = p.tool === 'eraser' || p.tool === 'stroke';
+      const d = Math.max(3, erasing ? p.width * 5 : p.width);
       p.brush.style.width = d + 'px';
       p.brush.style.height = d + 'px';
-      p.brush.classList.toggle('wc-brush-eraser', p.tool === 'eraser');
-      p.brush.style.background = p.tool === 'eraser' ? '' : (p.pen || PAD_COLORS[p.rec.color].text);
+      p.brush.classList.toggle('wc-brush-eraser', erasing);
+      p.brush.style.background = erasing ? '' : (p.pen || PAD_COLORS[p.rec.color].text);
       p.brushR = d / 2;
     }
     function brushMove(c, ev) {
@@ -1459,8 +1579,16 @@
       p.rec.refs.forEach((ref) => {
         const col = HL_COLORS[ref.color] || HL_COLORS.yellow;
         const tag = '[' + ref.n + ']';
-        const needle = tag + ' “' + ref.q + '”';                       // [n] “quote”
-        const at = text.lastIndexOf(needle);
+        const full = '“' + ref.q + '” ' + tag;                          // “quote” [n]
+        let at = text.lastIndexOf(full);
+        if (at >= 0) {
+          ranges.push({ s: at + full.length - tag.length, e: at + full.length, col, strong: true });
+          ranges.push({ s: at, e: at + full.length - tag.length, col });
+          blocks.push({ ref, s: at, e: at + full.length, tagS: at + full.length - tag.length, tagE: at + full.length });
+          return;
+        }
+        const needle = tag + ' “' + ref.q + '”';                       // older [n] “quote”
+        at = text.lastIndexOf(needle);
         if (at >= 0) {
           ranges.push({ s: at, e: at + tag.length, col, strong: true });
           ranges.push({ s: at + tag.length + 1, e: at + needle.length, col });
@@ -1559,7 +1687,7 @@
       if (!c.padLoaded) return;                  // never overwrite notes that were not loaded yet
       const r = c.pad.rec, k = c.padKeyUsed;
       if (!hasContent(r) && r.color === 'yellow') chrome.storage.local.remove(k);
-      else chrome.storage.local.set({ [k]: { text: r.text, color: r.color, mode: r.mode, ink: r.ink, refs: r.refs, refSeq: r.refSeq, refsCollapsed: r.refsCollapsed } });
+      else chrome.storage.local.set({ [k]: { text: r.text, color: r.color, mode: r.mode, ink: r.ink, pageInk: r.pageInk || [], refs: r.refs, refSeq: r.refSeq, refsCollapsed: r.refsCollapsed } });
       c.hasNotes = hasContent(r);
       c.pad.status.textContent = 'Saved';
       updatePadBtn(c);
@@ -1612,7 +1740,8 @@
         <div class="wc-pad-colors" hidden></div>
         <div class="wc-pad-ink">
           <button class="wc-ink-tool on" data-tool="pen" title="Pen">✎</button>
-          <button class="wc-ink-tool" data-tool="eraser" title="Eraser">⌫</button>
+          <button class="wc-ink-tool" data-tool="eraser" title="Pixel eraser">⌫</button>
+          <button class="wc-ink-tool" data-tool="stroke" title="Stroke eraser (removes whole strokes)">⊘</button>
           <span class="wc-sep"></span>
           <span class="wc-ink-colors"></span>
           <span class="wc-sep"></span>
@@ -1695,7 +1824,7 @@
       // typed notes
       pad.text.addEventListener('input', () => { pad.rec.text = pad.text.value; renderMirror(c); scheduleSave(c); });
       pad.text.addEventListener('scroll', () => syncMirror(c), { passive: true });
-      // one click on a reference number opens it ([2] in front of a note); Ctrl/Cmd+click anywhere in the note works too
+      // one click on a reference number opens it ([2] after a note); Ctrl/Cmd+click anywhere in the note works too
       pad.text.addEventListener('click', (e) => {
         if (!c.padLoaded) return;
         const ta = pad.text;
@@ -1761,8 +1890,36 @@
         cv.focus({ preventScroll: true });
         cv.setPointerCapture(e.pointerId);
         pad.drawing = e.pointerId;
+        const toData = (ev) => {
+          const r = cv.getBoundingClientRect();
+          return { x: (ev.clientX - r.left) / state.zoom, y: (ev.clientY - r.top) / state.zoom };
+        };
+        // stroke eraser: sweeping removes every whole stroke it touches
+        if (pad.tool === 'stroke') {
+          const sweep = (ev) => {
+            const evs = ev.getCoalescedEvents ? ev.getCoalescedEvents() : [ev];
+            let hit = false;
+            evs.forEach((x) => { const p0 = toData(x); if (eraseStrokeAt(c, p0.x, p0.y)) hit = true; });
+            if (hit) { renderInk(c); scheduleSave(c); }
+          };
+          sweep(e);
+          const mv = (ev) => sweep(ev);
+          const up = (ev) => {
+            cv.removeEventListener('pointermove', mv);
+            cv.removeEventListener('pointerup', up);
+            cv.removeEventListener('pointercancel', up);
+            try { cv.releasePointerCapture(ev.pointerId); } catch { /* ignore */ }
+            pad.drawing = null;
+          };
+          cv.addEventListener('pointermove', mv);
+          cv.addEventListener('pointerup', up);
+          cv.addEventListener('pointercancel', up);
+          return;
+        }
         const eraser = pad.tool === 'eraser';
         const stroke = { c: eraser ? null : pad.pen, w: pad.width, e: eraser, p: [] };
+        stroke.line = !eraser && !!e.shiftKey;         // Shift+draw: straight line (axis/45° snapped)
+        stroke.x0 = 0; stroke.y0 = 0; stroke.f0 = 1;
         pad.rec.ink.push(stroke);
         pad.redo = [];
         const ctx = cv.getContext && cv.getContext('2d');
@@ -1795,20 +1952,48 @@
         sy = (e.clientY - cv.getBoundingClientRect().top) / state.zoom;
         lastT = e.timeStamp;
         add(e, true);
+        stroke.x0 = sx; stroke.y0 = sy; stroke.f0 = f;
         if (ctx) { ctx.setTransform(pad.sc, 0, 0, pad.sc, 0, 0); drawDot(ctx, stroke, auto); }
         brushMove(c, e);
 
+        // straight-line preview: full repaint, throttled to one per frame
+        let lineRaf = 0;
+        const paintLine = () => {
+          lineRaf = 0;
+          renderInk(c);
+          const ctx2 = cv.getContext && cv.getContext('2d');
+          if (ctx2) { ctx2.setTransform(pad.sc, 0, 0, pad.sc, 0, 0); drawStroke(ctx2, stroke, auto); }
+        };
+        const lineTo = (ev) => {
+          const p0 = toData(ev);
+          const dx = p0.x - stroke.x0, dy = p0.y - stroke.y0;
+          const adx = Math.abs(dx), ady = Math.abs(dy);
+          let ex = p0.x, ey = p0.y;
+          if (adx > ady * 2.5) ey = stroke.y0;
+          else if (ady > adx * 2.5) ex = stroke.x0;
+          else {
+            const m = Math.min(adx, ady);
+            ex = stroke.x0 + Math.sign(dx || 1) * m;
+            ey = stroke.y0 + Math.sign(dy || 1) * m;
+          }
+          stroke.p = [stroke.x0, stroke.y0, stroke.f0,
+            Math.round(ex * 10) / 10, Math.round(ey * 10) / 10, stroke.f0];
+          if (!lineRaf) lineRaf = requestAnimationFrame(paintLine);
+        };
+
         const mv = (ev) => {
+          if (stroke.line) { lineTo(ev); return; }
           const evs = ev.getCoalescedEvents ? ev.getCoalescedEvents() : [];
           (evs.length ? evs : [ev]).forEach((x) => add(x, false));
           paint(false);
         };
         const up = (ev) => {
+          if (lineRaf) { cancelAnimationFrame(lineRaf); lineRaf = 0; }
           cv.removeEventListener('pointermove', mv);
           cv.removeEventListener('pointerup', up);
           cv.removeEventListener('pointercancel', up);
           try { cv.releasePointerCapture(ev.pointerId); } catch { /* ignore */ }
-          add(ev, false, 1);                                           // finish exactly where the pen was lifted
+          if (!stroke.line) add(ev, false, 1);                            // finish exactly where the pen was lifted
           paint(true);
           pad.drawing = null;
           scheduleSave(c);
@@ -1826,11 +2011,22 @@
         e.stopPropagation();
         handle.setPointerCapture(e.pointerId);
         const start = { x: e.clientX, y: e.clientY, w: c.el.offsetWidth, h: c.el.offsetHeight, cx: c.x, pw: el.offsetWidth };
-        const mv = (ev) => onMove(start, (ev.clientX - start.x) / state.zoom, (ev.clientY - start.y) / state.zoom);
+        let rzAnim = 0, lx = e.clientX, ly = e.clientY;
+        setFast(true);
+        const step = () => {
+          rzAnim = 0;
+          onMove(start, (lx - start.x) / state.zoom, (ly - start.y) / state.zoom);
+          queueTrailsFor(c);
+        };
+        const mv = (ev) => { lx = ev.clientX; ly = ev.clientY; if (!rzAnim) rzAnim = requestAnimationFrame(step); };
         const up = (ev) => {
+          if (rzAnim) { cancelAnimationFrame(rzAnim); rzAnim = 0; }
           handle.removeEventListener('pointermove', mv);
           handle.removeEventListener('pointerup', up);
           handle.removeEventListener('pointercancel', up);
+          setFast(false);
+          onMove(start, (ev.clientX - start.x) / state.zoom, (ev.clientY - start.y) / state.zoom);
+          queueTrails();
           try { handle.releasePointerCapture(ev.pointerId); } catch { /* ignore */ }
         };
         handle.addEventListener('pointermove', mv);
@@ -1845,13 +2041,13 @@
         c.el.style.width = nw + 'px';
         c.el.style.height = nh + 'px';
         place(c);
-        queueTrails();
+        queueTrailsFor(c);
       });
       drag(el.querySelector('.wc-pad-edge'), (st, dx) => {
         const nw = clamp(st.pw + (pad.side === 'left' ? -dx : dx), 220, 700);
         el.style.width = nw + 'px';
         placePad(c);
-        queueTrails();
+        queueTrailsFor(c);
       });
 
       el.addEventListener('pointerdown', () => focusCard(c), true);
@@ -1954,7 +2150,13 @@
       keep.forEach((x, i) => map.set(x.n, i + 1));
       const top = p.text.scrollTop;
       rec.text = rec.text.split('\n').map((line) => {
-        let m = /^\[(\d+)\] (“.*)$/.exec(line);                       // "[n] “quote”"
+        let m = /^(.*)\s\[(\d+)\]$/.exec(line);                        // "“quote” [n]"
+        if (m) {
+          const num = Number(m[2]);
+          if (num === ref.n) return m[1];                            // the quote stays, only its stale number goes
+          return map.has(num) ? m[1] + ' [' + map.get(num) + ']' : line;
+        }
+        m = /^\[(\d+)\] (“.*)$/.exec(line);                       // older "[n] “quote”"
         if (m) {
           const num = Number(m[1]);
           if (num === ref.n) return m[2];                            // the quote stays, only its stale number goes
@@ -1977,6 +2179,121 @@
       scheduleMarks();
     }
 
+    // ---------- handwriting on the article itself (overlay canvas inside the card body) ----------
+    function createPageInk(c) {
+      const cv = document.createElement('canvas');
+      cv.className = 'wc-pageink';
+      c.body.appendChild(cv);
+      const pi = c.pageInk = {
+        canvas: cv, active: false, drawing: null,
+        strokes: (c.pad && c.pad.rec.pageInk) || [],
+      };
+      const toData = (ev) => {
+        const r = cv.getBoundingClientRect();
+        return { x: (ev.clientX - r.left) / state.zoom, y: (ev.clientY - r.top) / state.zoom };
+      };
+      cv.addEventListener('pointerdown', (e) => {
+        if (!pi.active || pi.drawing !== null) return;
+        if (e.pointerType === 'mouse' && e.button !== 0) return;
+        e.preventDefault();
+        e.stopPropagation();
+        cv.setPointerCapture(e.pointerId);
+        pi.drawing = e.pointerId;
+        const eraser = !!(c.pad && (c.pad.tool === 'eraser' || c.pad.tool === 'stroke'));
+        const stroke = { w: 3, e: eraser, p: [] };
+        pi.strokes.push(stroke);
+        const dpr = window.devicePixelRatio || 1;
+        const ctx = cv.getContext && cv.getContext('2d');
+        let sx = 0, sy = 0, nextSeg = 1;
+        const p0 = toData(e);
+        sx = p0.x; sy = p0.y;
+        stroke.p.push(Math.round(sx * 10) / 10, Math.round(sy * 10) / 10, 1);
+        const paint = (final) => {
+          if (!ctx) return;
+          ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+          nextSeg = drawSegments(ctx, stroke, '#1e293b', nextSeg, final);
+        };
+        if (ctx) { ctx.setTransform(dpr, 0, 0, dpr, 0, 0); drawDot(ctx, stroke, '#1e293b'); }
+        const mv = (ev) => {
+          const evs = ev.getCoalescedEvents ? ev.getCoalescedEvents() : [ev];
+          evs.forEach((x) => {
+            const p = toData(x);
+            if (Math.hypot(p.x - sx, p.y - sy) < 0.6) return;
+            sx = p.x; sy = p.y;
+            stroke.p.push(Math.round(sx * 10) / 10, Math.round(sy * 10) / 10, 1);
+          });
+          paint(false);
+        };
+        const up = (ev) => {
+          cv.removeEventListener('pointermove', mv);
+          cv.removeEventListener('pointerup', up);
+          cv.removeEventListener('pointercancel', up);
+          try { cv.releasePointerCapture(ev.pointerId); } catch { /* ignore */ }
+          const p = toData(ev);
+          stroke.p.push(Math.round(p.x * 10) / 10, Math.round(p.y * 10) / 10, 1);
+          paint(true);
+          pi.drawing = null;
+          savePageInk(c);
+        };
+        cv.addEventListener('pointermove', mv);
+        cv.addEventListener('pointerup', up);
+        cv.addEventListener('pointercancel', up);
+      });
+    }
+
+    function sizePageInk(c) {
+      const pi = c.pageInk;
+      if (!pi) return;
+      const cv = pi.canvas;
+      const w = Math.max(c.body.scrollWidth, c.body.clientWidth);
+      const h = Math.max(c.body.scrollHeight, c.body.clientHeight);
+      if (!w || !h) return;
+      const dpr = window.devicePixelRatio || 1;
+      cv.style.width = w + 'px';
+      cv.style.height = h + 'px';
+      const W = Math.round(w * dpr), H = Math.round(h * dpr);
+      if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; }
+      renderPageInk(c);
+    }
+
+    function renderPageInk(c) {
+      const pi = c.pageInk;
+      if (!pi) return;
+      const ctx = pi.canvas.getContext && pi.canvas.getContext('2d');
+      if (!ctx) return;
+      const dpr = window.devicePixelRatio || 1;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, pi.canvas.clientWidth, pi.canvas.clientHeight);
+      pi.strokes.forEach((st) => drawStroke(ctx, st, '#1e293b'));
+    }
+
+    function savePageInk(c) {
+      const pi = c.pageInk;
+      if (!pi || !c.pad || !c.padLoaded) return;
+      c.pad.rec.pageInk = pi.strokes;
+      scheduleSave(c);
+    }
+
+    function togglePageInk(c) {
+      if (c.pageInk && c.pageInk.active) {
+        c.pageInk.active = false;
+        c.el.querySelector('.wc-pageinkbtn').classList.toggle('on', false);
+        c.pageInk.canvas.classList.toggle('on', false);
+        savePageInk(c);
+        return;
+      }
+      loadPad(c, () => {
+        if (!c.pageInk) createPageInk(c);
+        else c.pageInk.strokes = c.pad.rec.pageInk || c.pageInk.strokes;
+        c.pageInk.active = true;
+        c.el.querySelector('.wc-pageinkbtn').classList.toggle('on', true);
+        sizePageInk(c);
+        c.pageInk.canvas.classList.toggle('on', true);
+        afterLoad(c, () => { if (c.pageInk && c.pageInk.active) sizePageInk(c); });
+        showToast('Writing on the article — toggle ✐ to stop');
+      });
+    }
+
     // ---------- full view: one card's article and its notes, in place of the canvas ----------
     function applyFullSide(c) {
       if (state.full !== c) return;
@@ -1985,6 +2302,7 @@
     function setFullNotes(on) {
       state.fullNotes = on;
       fullSide.hidden = !on;
+      if (fullDiv) fullDiv.hidden = !on;
       fullNotesBtn.classList.toggle('on', on);
       const c = state.full;
       if (on && c && c.pad && c.pad.rec.mode === 'ink') requestAnimationFrame(() => renderInk(c));
@@ -2009,6 +2327,7 @@
       c.pad.el.hidden = false;
       fullSide.replaceChildren(c.pad.el);
       applyFullSide(c);
+      applyFullSideW();
       loadPad(c, () => applyPadUI(c));
       vp.style.visibility = 'hidden';
       full.hidden = false;
@@ -2042,6 +2361,38 @@
 
     fullBack.addEventListener('click', () => exitFull(false));
     fullNotesBtn.addEventListener('click', () => setFullNotes(!state.fullNotes));
+
+    // drag the divider between article and notes to resize the notes column
+    if (fullDiv) fullDiv.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0 || fullSide.hidden) return;
+      e.preventDefault();
+      fullDiv.setPointerCapture(e.pointerId);
+      const startW = fullSide.offsetWidth, sx = e.clientX;
+      const left = fullMain.classList.contains('wc-notes-left');
+      let dvAnim = 0, lx = sx;
+      const step = () => {
+        dvAnim = 0;
+        state.fullSideW = clamp(Math.round(startW + (left ? (lx - sx) : (sx - lx))), 240, 720);
+        applyFullSideW();
+      };
+      const mv = (ev) => { lx = ev.clientX; if (!dvAnim) dvAnim = requestAnimationFrame(step); };
+      const up = (ev) => {
+        if (dvAnim) { cancelAnimationFrame(dvAnim); dvAnim = 0; }
+        fullDiv.removeEventListener('pointermove', mv);
+        fullDiv.removeEventListener('pointerup', up);
+        fullDiv.removeEventListener('pointercancel', up);
+        state.fullSideW = clamp(Math.round(startW + (left ? (ev.clientX - sx) : (sx - ev.clientX))), 240, 720);
+        applyFullSideW();
+        chrome.storage.local.set({ fullSideW: state.fullSideW });
+        try { fullDiv.releasePointerCapture(ev.pointerId); } catch { /* ignore */ }
+      };
+      fullDiv.addEventListener('pointermove', mv);
+      fullDiv.addEventListener('pointerup', up);
+      fullDiv.addEventListener('pointercancel', up);
+    });
+    chrome.storage.local.get({ fullSideW: 0 }, (v) => {
+      if (typeof v.fullSideW === 'number' && v.fullSideW > 0) { state.fullSideW = v.fullSideW; applyFullSideW(); }
+    });
 
     // links in full view: open the article as a card (with its trail) and show it in full view
     full.addEventListener('click', (e) => {
@@ -2348,7 +2699,7 @@
           n, title: c.title, key: c.canon || c.key, sec: sec.text, secId: sec.id,
           q: quote, qn: qn.slice(0, 4000), pre, post, color: col,
         });
-        const block = '[' + n + '] “' + quote + '”';          // the number in front is the whole reference
+        const block = '“' + quote + '” [' + n + ']';          // the number after is the whole reference
         const sep = !rec.text ? '' : (rec.text.endsWith('\n\n') ? '' : (rec.text.endsWith('\n') ? '\n' : '\n\n'));
         rec.text = rec.text + sep + block + '\n';           // existing notes stay exactly as they were
         rec.mode = 'text';
@@ -2514,8 +2865,99 @@
       wcOpenExternal(href);
     }, true));
 
+    async function toggleFull() {
+      try {
+        const on = await WCStore.toggleFullscreen();
+        const b = root.querySelector('[data-act="full"]');
+        if (b) b.classList.toggle('on', !!on);
+      } catch { /* ignore */ }
+    }
+
+    // ---------- export / import ----------
+    async function exportCanvas() {
+      try {
+        const all = await new Promise((res) => chrome.storage.local.get(null, res));
+        const prefix = 'pad:' + WC_HOST() + ':';
+        const pads = {};
+        Object.keys(all || {}).forEach((k) => { if (k.startsWith(prefix)) pads[k] = all[k]; });
+        const prefs = {};
+        ['labelColors', 'customLabels', 'recentLabels', 'hlColor', 'showDots', 'fullSideW'].forEach((k) => {
+          if (all && all[k] !== undefined) prefs[k] = all[k];
+        });
+        const backup = {
+          app: 'wiki-canvas', v: 1, lang: WC_LANG,
+          savedAt: new Date().toISOString(),
+          canvas: snapshotCanvas(), pads, prefs,
+        };
+        const saved = await WCStore.exportFile('wiki-canvas-' + WC_LANG + '.json', JSON.stringify(backup));
+        showToast(saved ? 'Exported canvas (' + WC_LANG + ')' : 'Export cancelled');
+      } catch (e) { showToast('Export failed: ' + (e && e.message || e)); }
+    }
+
+    async function importCanvasFile() {
+      let picked = null;
+      try { picked = await WCStore.importFile(); }
+      catch (e) { showToast('Import failed: ' + (e && e.message || e)); return; }
+      if (!picked || !picked.contents) return;
+      let obj = null;
+      try { obj = JSON.parse(picked.contents); }
+      catch { showToast('That file is not valid JSON.'); return; }
+      if (!obj || obj.app !== 'wiki-canvas' || !obj.canvas) {
+        showToast('That file is not a Wiki Canvas export.');
+        return;
+      }
+      const ok = await wcConfirm('Import "' + (picked.name || 'backup') + '"? Unsaved canvas changes will be saved first.');
+      if (!ok) return;
+      applyBackup(obj);
+    }
+
+    async function applyBackup(obj) {
+      try {
+        const target = obj.lang || WC_LANG;
+        const merged = Object.assign({}, obj.pads, obj.prefs);
+        if (Object.keys(merged).length) {
+          await new Promise((res) => chrome.storage.local.set(merged, res));
+        }
+        if (obj.prefs && typeof obj.prefs.fullSideW === 'number') {
+          state.fullSideW = obj.prefs.fullSideW;
+          applyFullSideW();
+        }
+        if (target !== WC_LANG) {
+          saveCanvasNow();
+          await WCStore.kvSet('canvas_' + target, obj.canvas);
+          if (langSel) langSel.value = target;
+          await switchLang(target);
+        } else {
+          clearCanvasState();
+          loadCanvasData(obj.canvas);
+        }
+        showToast('Imported canvas (' + target + ')');
+      } catch (e) { showToast('Import failed: ' + (e && e.message || e)); }
+    }
+
+    function clearCanvasState() {
+      if (state.full) exitFull(false);
+      [...state.trails].forEach(removeTrail);
+      [...state.cards].forEach((c) => {
+        savePadNow(c);
+        try { ro.unobserve(c.el); } catch { /* ignore */ }
+        if (c.pad) { try { ro.unobserve(c.pad.el); } catch { /* ignore */ } c.pad.el.remove(); }
+        if (c.pageInk && c.pageInk.canvas) c.pageInk.canvas.remove();
+        cardByEl.delete(c.el);
+        c.el.remove();
+      });
+      [...state.notes].forEach((n) => n.el.remove());
+      state.cards = []; state.notes = []; state.trails = [];
+      state.x = 0; state.y = 0; state.zoom = 1;
+    }
+
     // one file per language: { view, cards, trails, notes } ('_' not ':' — ':' is illegal on Windows)
     const wcKey = () => 'canvas_' + WC_LANG;
+
+    // ---------- full-view notes width ----------
+    function applyFullSideW() {
+      if (fullSide) fullSide.style.width = state.fullSideW ? state.fullSideW + 'px' : '';
+    }
     function snapshotCanvas() {
       return {
         v: 1,
@@ -2615,18 +3057,7 @@
     async function switchLang(nl) {
       if (!nl || nl === WC_LANG) return;
       saveCanvasNow();
-      if (state.full) exitFull(false);
-      [...state.trails].forEach(removeTrail);
-      [...state.cards].forEach((c) => {
-        savePadNow(c);
-        try { ro.unobserve(c.el); } catch { /* ignore */ }
-        if (c.pad) { try { ro.unobserve(c.pad.el); } catch { /* ignore */ } c.pad.el.remove(); }
-        cardByEl.delete(c.el);
-        c.el.remove();
-      });
-      [...state.notes].forEach((n) => n.el.remove());
-      state.cards = []; state.notes = []; state.trails = [];
-      state.x = 0; state.y = 0; state.zoom = 1;
+      clearCanvasState();
       WC_LANG = nl; WC_PAGE.lang = nl;
       WC_API = 'https://' + WC_LANG + '.wikipedia.org';
       pageDir = RTL_LANGS.includes(WC_LANG) ? 'rtl' : 'ltr';

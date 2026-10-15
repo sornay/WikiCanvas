@@ -36,6 +36,42 @@
     if (invoke) return invoke("quit_app");
     window.close();
   }
+  async function exportFile(suggestedName, text) {
+    if (invoke) return invoke("canvas_export", { name: suggestedName, contents: text });
+    const blob = new Blob([text], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = suggestedName;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500);
+    return a.download;
+  }
+  async function importFile() {
+    if (invoke) return invoke("canvas_import");
+    return new Promise((resolve) => {
+      const inp = document.createElement("input");
+      inp.type = "file";
+      inp.accept = ".json,application/json";
+      inp.onchange = () => {
+        const f = inp.files && inp.files[0];
+        if (!f) return resolve(null);
+        const r = new FileReader();
+        r.onload = () => resolve({ name: f.name, contents: String(r.result) });
+        r.onerror = () => resolve(null);
+        r.readAsText(f);
+      };
+      inp.click();
+    });
+  }
+  async function toggleFullscreen() {
+    if (invoke) return invoke("toggle_fullscreen");
+    try {
+      if (document.fullscreenElement) { await document.exitFullscreen(); return false; }
+      await document.documentElement.requestFullscreen();
+      return true;
+    } catch { return !!document.fullscreenElement; }
+  }
 
-  window.WCStore = { isTauri: !!invoke, kvAll, kvSet, kvRemove, wikiGet, openExternal, quit };
+  window.WCStore = { isTauri: !!invoke, kvAll, kvSet, kvRemove, wikiGet, openExternal, quit, exportFile, importFile, toggleFullscreen };
 })();

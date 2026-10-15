@@ -956,3 +956,22 @@ html, body { margin: 0; height: 100%; background: #eceae3; }
 
 /* slimmer scrollbars (the Windows defaults are bulky) */
 #wc-root * { scrollbar-width: thin; scrollbar-color: rgba(120, 120, 110, .55) transparent; }
+
+/* fast-drag mode: kill expensive paint while moving (restored on drop) */
+.wc-fast .wc-card, .wc-fast .wc-pad { box-shadow: none !important; }
+.wc-fast .wc-trail path { stroke-width: 2; opacity: .55; }
+.wc-fast .wc-label { box-shadow: none !important; }
+.wc-fast * { backdrop-filter: none !important; }
+.wc-card.wc-drag { will-change: left, top; }
+
+/* full-view notes divider */
+.wc-full-div { flex: none; width: 9px; cursor: ew-resize; background: transparent; }
+.wc-full-div:hover { background: rgba(13, 148, 136, .25); }
+.wc-full-div[hidden] { display: none; }
+
+/* handwriting on the article itself */
+.wc-body { position: relative; }
+.wc-pageink { position: absolute; left: 0; top: 0; z-index: 5; display: none; touch-action: none; }
+.wc-pageink.on { display: block; cursor: crosshair; }
+.wc-pageinkbtn.on { background: #e6f5f3 !important; border-color: var(--accent); color: var(--accent); }
+.wc-min .wc-pageinkbtn { display: none; }

@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
 use tauri::{AppHandle, Manager};
+use tauri_plugin_dialog::{DialogExt, FilePath};
 
 const CACHE_MAX_AGE_SECS: u64 = 14 * 24 * 60 * 60;
 const USER_AGENT: &str = "WikiCanvas/1.0.0 (desktop; Tauri)";
@@ -169,15 +170,82 @@ fn quit_app(app: AppHandle) {
     app.exit(0);
 }
 
+fn dialog_path(p: &FilePath) -> Result<PathBuf, String> {
+    p.as_path().map(|p| p.to_path_buf()).ok_or_else(|| "unsupported location".to_string())
+}
+
+/// Save the exported canvas JSON to a user-chosen file. Returns the saved path.
+#[tauri::command]
+fn canvas_export(app: AppHandle, name: String, contents: String) -> Result<String, String> {
+    let safe: String = name
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' { c } else { '_' })
+        .collect();
+    let safe = if safe.is_empty() { "wiki-canvas.json".to_string() } else { safe };
+    let picked = app
+        .dialog()
+        .file()
+        .add_filter("Wiki Canvas backup", &["json"])
+        .set_file_name(&safe)
+        .blocking_save_file()
+        .ok_or_else(|| "export cancelled".to_string())?;
+    let dest = dialog_path(&picked)?;
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let tmp = dest.with_extension("json.tmp");
+    std::fs::write(&tmp, contents).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, &dest).map_err(|e| e.to_string())?;
+    Ok(dest.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+fn canvas_import(app: AppHandle) -> Result<Option<serde_json::Value>, String> {
+    let picked = app
+        .dialog()
+        .file()
+        .add_filter("Wiki Canvas backup", &["json"])
+        .blocking_pick_file();
+    let picked = match picked {
+        Some(p) => p,
+        None => return Ok(None),
+    };
+    let path = dialog_path(&picked)?;
+    let text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    if text.len() > 64 * 1024 * 1024 {
+        return Err("file too large".into());
+    }
+    let name = path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("backup.json")
+        .to_string();
+    Ok(Some(serde_json::json!({ "name": name, "contents": text })))
+}
+
+#[tauri::command]
+fn toggle_fullscreen(app: AppHandle) -> Result<bool, String> {
+    let win = app
+        .get_webview_window("main")
+        .ok_or_else(|| "no main window".to_string())?;
+    let cur = win.is_fullscreen().map_err(|e| e.to_string())?;
+    win.set_fullscreen(!cur).map_err(|e| e.to_string())?;
+    Ok(!cur)
+}
+
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             kv_all,
             kv_set,
             kv_remove,
             wiki_get,
             open_external,
-            quit_app
+            quit_app,
+            canvas_export,
+            canvas_import,
+            toggle_fullscreen
         ])
         .run(tauri::generate_context!())
         .expect("error while running Wiki Canvas");
