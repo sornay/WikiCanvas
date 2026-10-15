@@ -3,7 +3,6 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
 use tauri::{AppHandle, Manager};
-use tauri_plugin_opener::OpenerExt;
 
 const CACHE_MAX_AGE_SECS: u64 = 14 * 24 * 60 * 60;
 const USER_AGENT: &str = "WikiCanvas/1.0.0 (desktop; Tauri)";
@@ -155,14 +154,12 @@ fn wiki_get(app: AppHandle, url: String) -> Result<String, String> {
 }
 
 #[tauri::command]
-fn open_external(app: AppHandle, url: String) -> Result<(), String> {
+fn open_external(_app: AppHandle, url: String) -> Result<(), String> {
     let parsed = url::Url::parse(&url).map_err(|_| "invalid url".to_string())?;
     if parsed.scheme() != "http" && parsed.scheme() != "https" {
         return Err("only http/https allowed".into());
     }
-    app.opener()
-        .open_url(url, None::<&str>)
-        .map_err(|e| e.to_string())
+    open::that(&url).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -172,7 +169,6 @@ fn quit_app(app: AppHandle) {
 
 fn main() {
     tauri::Builder::default()
-        .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             kv_all,
             kv_set,

@@ -32,7 +32,13 @@ jobs:
 
       - name: List bundles (debug)
         if: always()
-        run: Get-ChildItem -Recurse src-tauri\target\release\bundle | Select-Object FullName, Length
+        continue-on-error: true
+        run: |
+          if (Test-Path src-tauri\target\release\bundle) {
+            Get-ChildItem -Recurse src-tauri\target\release\bundle | Select-Object FullName, Length
+          } else {
+            Write-Host 'bundle dir missing: the build step above failed, its log has the real error'
+          }
         shell: pwsh
 
       - name: Upload NSIS installer
