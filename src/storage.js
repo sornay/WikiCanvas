@@ -3,6 +3,7 @@
 (function () {
   const tauri = window.__TAURI__ && window.__TAURI__.core;
   const invoke = tauri ? tauri.invoke : null;
+  const nativeFetch = window.fetch.bind(window);
 
   async function kvAll() {
     if (invoke) return invoke("kv_all");
@@ -23,7 +24,7 @@
   }
   async function wikiGet(url) {
     if (invoke) return invoke("wiki_get", { url });
-    const r = await fetch(url);
+    const r = await nativeFetch(url);
     if (!r.ok) throw new Error("http " + r.status);
     return r.text();
   }
@@ -31,6 +32,10 @@
     if (invoke) return invoke("open_external", { url });
     window.open(url, "_blank", "noopener");
   }
+  async function quit() {
+    if (invoke) return invoke("quit_app");
+    window.close();
+  }
 
-  window.WCStore = { isTauri: !!invoke, kvAll, kvSet, kvRemove, wikiGet, openExternal };
+  window.WCStore = { isTauri: !!invoke, kvAll, kvSet, kvRemove, wikiGet, openExternal, quit };
 })();
