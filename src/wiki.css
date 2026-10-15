@@ -1,0 +1,97 @@
+/* Base styles for Wikipedia article content.
+   Inside wikipedia.org the page's own stylesheet styled infoboxes, tables, thumbnails and so on;
+   a standalone app has no such stylesheet, so the common elements are styled here. */
+
+.wc-body { color: #202122; }
+
+/* infobox */
+.wc-body .infobox, .wc-body .infobox_v2, .wc-body table.sidebar, .wc-body .vcard {
+  border: 1px solid #a2a9b1;
+  border-spacing: 3px;
+  background: #f8f9fa;
+  color: #202122;
+  line-height: 1.4;
+}
+.wc-body .infobox th, .wc-body .infobox td { vertical-align: top; padding: .2em .4em; }
+.wc-body .infobox caption, .wc-body .infobox-above, .wc-body .infobox .infobox-title { font-weight: 700; text-align: center; padding: .3em; }
+.wc-body .infobox-header, .wc-body .infobox .infobox-header { background: #ccf; text-align: center; }
+.wc-body .infobox-label { text-align: start; font-weight: 700; }
+.wc-body .infobox-image, .wc-body .infobox-full-data { text-align: center; }
+.wc-body .infobox-image img { max-width: 100%; height: auto; }
+
+/* tables */
+.wc-body table { border-collapse: collapse; }
+.wc-body .wikitable {
+  margin: 1em 0;
+  border: 1px solid #a2a9b1;
+  background: #f8f9fa;
+  color: #202122;
+}
+.wc-body .wikitable > * > tr > th, .wc-body .wikitable > * > tr > td { border: 1px solid #a2a9b1; padding: .2em .5em; }
+.wc-body .wikitable > * > tr > th { background: #eaecf0; text-align: center; }
+.wc-body .wikitable > caption { padding: .3em; font-weight: 700; }
+.wc-body .wikitable.sortable .sortkey, .wc-body .sortkey { display: none; }
+
+/* pictures */
+.wc-body .thumbinner { border: 1px solid #c8ccd1; background: #f8f9fa; padding: 3px; font-size: 94%; text-align: center; overflow: hidden; }
+.wc-body .thumbimage { border: 1px solid #c8ccd1; }
+.wc-body .thumbcaption { padding: 3px; text-align: start; line-height: 1.4; }
+.wc-body .magnify { display: none; }
+.wc-body figure { margin: 1em 0; }
+.wc-body figcaption { font-size: 90%; padding: 3px 0; }
+.wc-body ul.gallery { display: flex; flex-wrap: wrap; gap: 8px; margin: 1em 0; padding: 0; list-style: none; }
+.wc-body li.gallerybox { width: 150px; }
+.wc-body .gallerytext { font-size: 90%; padding: 2px; }
+
+/* notices and hatnotes */
+.wc-body .hatnote { margin: 0 0 .6em; padding-inline-start: 1.6em; font-style: italic; }
+.wc-body .hatnote i { font-style: normal; }
+.wc-body .ambox, .wc-body .tmbox, .wc-body .ombox, .wc-body .cmbox, .wc-body .mbox-small {
+  margin: .6em 0;
+  border: 1px solid #a2a9b1;
+  border-inline-start: 8px solid #36c;
+  background: #fbfbfb;
+  font-size: 92%;
+}
+.wc-body .ambox td, .wc-body .tmbox td, .wc-body .ombox td { padding: .3em .6em; }
+.wc-body .ambox img, .wc-body .tmbox img, .wc-body .ombox img { max-width: 40px; height: auto; }
+
+/* references */
+.wc-body .reflist, .wc-body .references { font-size: 90%; }
+.wc-body ol.references { padding-inline-start: 2em; }
+.wc-body sup.reference { font-size: 70%; line-height: 1; }
+.wc-body .mw-cite-backlink { font-size: 90%; }
+.wc-body cite { font-style: normal; }
+.wc-body .cs1-visible-error, .wc-body .error { color: #d33; }
+
+/* quotes, lists, small things */
+.wc-body blockquote { margin: 1em 0 1em 1.6em; padding-inline-start: .8em; border-inline-start: 3px solid #c8ccd1; }
+.wc-body dl { margin: .3em 0; }
+.wc-body dd { margin-inline-start: 1.6em; }
+.wc-body .hlist ul, .wc-body .hlist ol, .wc-body .hlist dl { margin: 0; padding: 0; }
+.wc-body .hlist li, .wc-body .hlist dd, .wc-body .hlist dt { display: inline; margin: 0; }
+.wc-body .hlist li::after { content: " \00b7  "; font-weight: 700; }
+.wc-body .hlist li:last-child::after { content: none; }
+.wc-body .hlist dd::after, .wc-body .hlist dt::after { content: " \00b7  "; font-weight: 700; }
+.wc-body .hlist dd:last-child::after, .wc-body .hlist dt:last-child::after { content: none; }
+.wc-body .plainlist ul, .wc-body ul.plainlist { margin: 0; padding: 0; list-style: none; }
+.wc-body .nowrap { white-space: nowrap; }
+.wc-body abbr[title] { text-decoration: underline dotted; cursor: help; }
+.wc-body .mw-empty-elt, .wc-body .sr-only, .wc-body .geo-nondefault, .wc-body .geo-multi-punct, .wc-body .mw-hidden { display: none; }
+.wc-body .geo-default { display: inline; }
+.wc-body .bday, .wc-body .dtstart { display: none; }
+.wc-body .flagicon img, .wc-body .flag img { vertical-align: -10%; }
+
+/* formulas: show the picture, keep the MathML only for screen readers */
+.wc-body .mwe-math-mathml-a11y {
+  position: absolute !important;
+  width: 1px; height: 1px;
+  margin: -1px; padding: 0; border: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.wc-body .mwe-math-fallback-image-inline { display: inline-block; vertical-align: middle; }
+.wc-body .mwe-math-fallback-image-display { display: block; margin: .5em auto; }
+.wc-body .mwe-math-element { max-width: 100%; }
+.wc-body .mwe-math-element-block { display: block; text-align: center; overflow-x: auto; }
