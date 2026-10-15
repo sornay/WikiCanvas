@@ -28,7 +28,7 @@ jobs:
         run: cargo install tauri-cli --version "^2" --locked
 
       - name: Build Tauri app (NSIS installer)
-        run: cargo tauri build -- --bundles nsis
+        run: cargo tauri build
 
       - name: List bundles (debug)
         if: always()
