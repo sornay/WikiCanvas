@@ -98,11 +98,32 @@ fn cache_path_for(dir: &std::path::Path, url: &str) -> PathBuf {
     dir.join(format!("{hex}.body"))
 }
 
-/// Downloads https://*.wikipedia.org URLs only, caching on disk.
-/// Reuses cache younger than 14 days, and any cache as offline fallback.
-#[tauri::command]
-fn wiki_get(app: AppHandle, url: String) -> Result<String, String> {
-    let parsed = url::Url::parse(&url).map_err(|_| "invalid url".to_string())?;
+/// The API answers are JSON objects/arrays. Anything else (an error page, an empty
+/// body, or a half-written file) must never be treated as a cache hit.
+fn looks_like_json(text: &str) -> bool {
+    let t = text.trim_start();
+    t.starts_with('{') || t.starts_with('[')
+}
+
+fn read_cache(path: &std::path::Path) -> Option<String> {
+    let text = std::fs::read_to_string(path).ok()?;
+    if looks_like_json(&text) { Some(text) } else { None }
+}
+
+/// Write via a temp file so a crash or a full disk cannot leave a truncated body behind.
+fn write_cache(path: &std::path::Path, text: &str) {
+    if !looks_like_json(text) {
+        return;
+    }
+    let tmp = path.with_extension("body.tmp");
+    if std::fs::write(&tmp, text).is_ok() {
+        let _ = std::fs::rename(&tmp, path);
+    }
+}
+
+/// The download is blocking, so it runs off the UI thread; see the command wrapper below.
+fn wiki_get_blocking(app: &AppHandle, url: &str) -> Result<String, String> {
+    let parsed = url::Url::parse(url).map_err(|_| "invalid url".to_string())?;
     if parsed.scheme() != "https" {
         return Err("only https allowed".into());
     }
@@ -111,8 +132,8 @@ fn wiki_get(app: AppHandle, url: String) -> Result<String, String> {
         return Err("only wikipedia.org allowed".into());
     }
 
-    let dir = cache_dir(&app)?;
-    let path = cache_path_for(&dir, &url);
+    let dir = cache_dir(app)?;
+    let path = cache_path_for(&dir, url);
 
     if let Ok(meta) = std::fs::metadata(&path) {
         if let Ok(mtime) = meta.modified() {
@@ -122,7 +143,7 @@ fn wiki_get(app: AppHandle, url: String) -> Result<String, String> {
                 .as_secs()
                 < CACHE_MAX_AGE_SECS
             {
-                if let Ok(cached) = std::fs::read_to_string(&path) {
+                if let Some(cached) = read_cache(&path) {
                     return Ok(cached);
                 }
             }
@@ -134,26 +155,41 @@ fn wiki_get(app: AppHandle, url: String) -> Result<String, String> {
         .timeout(Duration::from_secs(20))
         .build()
         .map_err(|e| e.to_string())?;
-    match client.get(&url).send() {
+    match client.get(url).send() {
         Ok(resp) => {
             if !resp.status().is_success() {
                 // Fall back to stale cache if the network call failed.
-                if let Ok(cached) = std::fs::read_to_string(&path) {
+                if let Some(cached) = read_cache(&path) {
                     return Ok(cached);
                 }
                 return Err(format!("wikipedia status {}", resp.status()));
             }
             let text = resp.text().map_err(|e| e.to_string())?;
-            let _ = std::fs::write(&path, &text);
+            if !looks_like_json(&text) {
+                if let Some(cached) = read_cache(&path) {
+                    return Ok(cached);
+                }
+                return Err("unexpected (non-JSON) response".into());
+            }
+            write_cache(&path, &text);
             Ok(text)
         }
         Err(e) => {
-            if let Ok(cached) = std::fs::read_to_string(&path) {
+            if let Some(cached) = read_cache(&path) {
                 return Ok(cached);
             }
             Err(format!("download failed: {e}"))
         }
     }
+}
+
+/// Downloads https://*.wikipedia.org URLs only, caching on disk.
+/// Reuses cache younger than 14 days, and any cache as offline fallback.
+#[tauri::command]
+async fn wiki_get(app: AppHandle, url: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || wiki_get_blocking(&app, &url))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -175,8 +211,7 @@ fn dialog_path(p: &FilePath) -> Result<PathBuf, String> {
 }
 
 /// Save the exported canvas JSON to a user-chosen file. Returns the saved path.
-#[tauri::command]
-fn canvas_export(app: AppHandle, name: String, contents: String) -> Result<String, String> {
+fn canvas_export_blocking(app: &AppHandle, name: &str, contents: &str) -> Result<String, String> {
     let safe: String = name
         .chars()
         .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' { c } else { '_' })
@@ -200,7 +235,13 @@ fn canvas_export(app: AppHandle, name: String, contents: String) -> Result<Strin
 }
 
 #[tauri::command]
-fn canvas_import(app: AppHandle) -> Result<Option<serde_json::Value>, String> {
+async fn canvas_export(app: AppHandle, name: String, contents: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || canvas_export_blocking(&app, &name, &contents))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn canvas_import_blocking(app: &AppHandle) -> Result<Option<serde_json::Value>, String> {
     let picked = app
         .dialog()
         .file()
@@ -221,6 +262,13 @@ fn canvas_import(app: AppHandle) -> Result<Option<serde_json::Value>, String> {
         .unwrap_or("backup.json")
         .to_string();
     Ok(Some(serde_json::json!({ "name": name, "contents": text })))
+}
+
+#[tauri::command]
+async fn canvas_import(app: AppHandle) -> Result<Option<serde_json::Value>, String> {
+    tauri::async_runtime::spawn_blocking(move || canvas_import_blocking(&app))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]

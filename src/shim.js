@@ -70,10 +70,13 @@
   window.fetch = function (url, opts) {
     const u = String((url && url.url) || url);
     if (/^https:\/\/[^/]*\.wikipedia\.org\//.test(u)) {
-      return S.wikiGet(u).then(
-        (text) => new Response(text, { status: 200, headers: { 'Content-Type': 'application/json' } }),
-        () => new Response('', { status: 503 })
-      );
+      // A failure rejects the fetch, exactly like a real network error. (It used to
+      // resolve with an empty 503 body, which made callers throw the confusing
+      // "Unexpected end of JSON input" instead of a useful message.)
+      return S.wikiGet(u).then((text) => {
+        if (!text) throw new Error('empty response');
+        return new Response(text, { status: 200, headers: { 'Content-Type': 'application/json' } });
+      });
     }
     return realFetch(url, opts);
   };
