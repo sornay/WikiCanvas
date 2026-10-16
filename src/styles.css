@@ -948,11 +948,15 @@ html, body { margin: 0; height: 100%; background: #eceae3; }
   border: 1px solid #d3cfc1;
   border-radius: 8px;
   background: #fff;
+  color: #222;
   font: inherit;
   cursor: pointer;
 }
-.wc-dialog button:hover { border-color: var(--accent); }
-.wc-dialog .wc-d-yes { border-color: var(--accent); background: var(--accent); color: #fff; }
+.wc-dialog button:hover { border-color: #0d9488; color: #0d9488; }
+/* literal colors, not var(--accent): the dialog lives on <body>, outside #wc-root */
+.wc-dialog .wc-d-no { background: #fff; color: #222; }
+.wc-dialog .wc-d-yes { border-color: #0d9488; background: #0d9488; color: #fff; font-weight: 600; }
+.wc-dialog .wc-d-yes:hover { background: #0b7d72; color: #fff; }
 
 /* slimmer scrollbars (the Windows defaults are bulky) */
 #wc-root * { scrollbar-width: thin; scrollbar-color: rgba(120, 120, 110, .55) transparent; }
@@ -975,3 +979,43 @@ html, body { margin: 0; height: 100%; background: #eceae3; }
 .wc-pageink.on { display: block; cursor: crosshair; }
 .wc-pageinkbtn.on { background: #e6f5f3 !important; border-color: var(--accent); color: var(--accent); }
 .wc-min .wc-pageinkbtn { display: none; }
+.wc-min .wc-pageink-bar { display: none !important; }
+
+/* toolbar for writing on the article (own --pt/--pb/--pbd so it works outside a pad) */
+.wc-pageink-bar {
+  --pt: #2a2a28;
+  --pb: #fffefb;
+  --pbd: #d3cfc1;
+  position: absolute;
+  left: 0; right: 0; top: 36px;
+  z-index: 12;
+  display: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  background: rgba(246, 244, 238, .97);
+  border-bottom: 1px solid #d8d4c7;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, .12);
+}
+.wc-pageink-bar.on { display: flex; }
+.wc-pageink-bar .wc-sep { background: var(--pbd); }
+.wc-pageink-bar .wc-ink-colors { display: inline-flex; }
+.wc-pageink-bar .wc-ink-c.on { outline: 2px solid var(--pt); outline-offset: 1px; }
+.wc-pib-title { font: 600 12px/1 -apple-system, "Segoe UI", sans-serif; color: #6b6455; white-space: nowrap; }
+.wc-pib-grow { flex: 1; }
+.wc-pib-x {
+  height: 24px;
+  padding: 0 10px;
+  border: 1px solid #0d9488;
+  border-radius: 6px;
+  background: #0d9488;
+  color: #fff;
+  font: 600 12px/1 -apple-system, "Segoe UI", sans-serif;
+  cursor: pointer;
+}
+.wc-pib-x:hover { background: #0b7d72; }
+.wc-full-article { position: relative; }
+.wc-full-article > .wc-pageink-bar { top: 0; }
+/* in full view the page ink covers the wider article; the pad's own tools are hidden */
+.wc-full-article .wc-pageink { z-index: 6; }

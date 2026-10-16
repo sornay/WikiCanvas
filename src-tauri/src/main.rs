@@ -212,7 +212,7 @@ fn canvas_import(app: AppHandle) -> Result<Option<serde_json::Value>, String> {
     };
     let path = dialog_path(&picked)?;
     let text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
-    if text.len() > 64 * 1024 * 1024 {
+    if text.len() > 512 * 1024 * 1024 {
         return Err("file too large".into());
     }
     let name = path

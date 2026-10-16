@@ -220,6 +220,7 @@
           <span class="wc-full-title" dir="auto"></span>
           <span class="wc-full-tools">
             <button class="wc-full-notes on" title="Show or hide the notes">Notes</button>
+            <button class="wc-full-pageink" title="Handwrite on the article">✐ Write</button>
             <a class="wc-full-ext" target="_blank" rel="noopener" title="Open on Wikipedia">↗</a>
           </span>
         </header>
@@ -253,6 +254,7 @@
     const fullTitle = root.querySelector('.wc-full-title');
     const fullExt = root.querySelector('.wc-full-ext');
     const fullNotesBtn = root.querySelector('.wc-full-notes');
+    const fullPageInkBtn = root.querySelector('.wc-full-pageink');
     const fullMain = root.querySelector('.wc-full-main');
     const fullArticle = root.querySelector('.wc-full-article');
     const fullDiv = root.querySelector('.wc-full-div');
@@ -344,7 +346,7 @@
     // pan by dragging the background
     vp.addEventListener('pointerdown', (e) => {
       if (e.button !== 0 || e.target.closest('.wc-card, .wc-label, .wc-note, .wc-pad')) return;
-      vp.setPointerCapture(e.pointerId);
+      try { vp.setPointerCapture(e.pointerId); } catch { /* ignore */ }
       root.classList.add('wc-panning');
       const ae = document.activeElement;                       // leave any text box / pad first
       if (ae && ae !== document.body && root.contains(ae) && ae.blur) ae.blur();
@@ -622,6 +624,8 @@
     const ro = new ResizeObserver(() => {
       state.cards.forEach(placePad);
       if (state.full && state.full.pad) { inkCheck(state.full); syncMirror(state.full); }
+      // keep writing on the article lined up when its card (or the full view) changes size
+      state.cards.forEach((c) => { if (c.pageInk && c.pageInk.active) sizePageInk(c); });
       queueTrails();
     });
 
@@ -664,12 +668,21 @@
       else (c.loadQ = c.loadQ || []).push(fn);
     }
 
+    // article HTML is kept here too, so an export can carry the pages and an import can serve them offline
+    const pageCache = new Map();            // title (and its resolved form) -> html
+
     async function fetchPage(title) {
+      const key = String(title).replace(/_/g, ' ');
+      const hit = pageCache.get(key) || pageCache.get(title);
+      if (hit) return { title: key, html: hit };
       const url = `${WC_API}/w/api.php?action=parse&page=${encodeURIComponent(title)}` +
         '&prop=text&redirects=1&disableeditsection=1&disablelimitreport=1&format=json&formatversion=2';
       const j = await (await fetch(url)).json();
       if (j.error) throw new Error(j.error.info || j.error.code);
-      return { title: j.parse.title, html: j.parse.text };
+      const resolved = j.parse.title;
+      pageCache.set(resolved, j.parse.text);
+      pageCache.set(key, j.parse.text);
+      return { title: resolved, html: j.parse.text };
     }
 
     function pulse(c) {
@@ -756,7 +769,7 @@
       c.head.addEventListener('pointerdown', (e) => {
         if (e.button !== 0 || e.target.closest('button, a')) return;
         e.preventDefault();
-        c.head.setPointerCapture(e.pointerId);
+        try { c.head.setPointerCapture(e.pointerId); } catch { /* ignore */ }
         const sx = e.clientX, sy = e.clientY, ox = c.x, oy = c.y;
         c._dragW = c.el.offsetWidth;
         if (c.padBox) c._dragPadW = c.padBox.w;
@@ -1039,7 +1052,10 @@
       else if (e.key === '0') zoomCenter(1 / state.zoom);
     });
 
-    window.addEventListener('resize', queueTrails);
+    window.addEventListener('resize', () => {
+      queueTrails();
+      state.cards.forEach((c) => { if (c.pageInk && c.pageInk.active) sizePageInk(c); });
+    });
 
     // ---------- relationship picker (double-click a label) ----------
     let popTrail = null;
@@ -1338,7 +1354,7 @@
       el.querySelector('.wc-grip').addEventListener('pointerdown', (e) => {
         if (e.button !== 0) return;
         const g = e.currentTarget;
-        g.setPointerCapture(e.pointerId);
+        try { g.setPointerCapture(e.pointerId); } catch { /* ignore */ }
         const sx = e.clientX, sy = e.clientY, ox = n.x, oy = n.y;
         const mv = (ev) => {
           n.x = ox + (ev.clientX - sx) / state.zoom;
@@ -1445,6 +1461,8 @@
 
     const inkActive = (c) => !!(c.pad && c.padOpen && !c.minimized && c.pad.rec.mode === 'ink');
     const inkScale = () => (window.devicePixelRatio || 1) * Math.max(1, Math.min(state.zoom, 3));
+    // full view shows the article / notes at 1:1, so screen px are body px there
+    const viewScale = (c) => (c && c.fullView ? 1 : state.zoom);
 
     // ---- handwriting rendering: smooth curves, width follows pressure (pen) or speed (mouse / finger) ----
     function inkStyle(ctx, st, auto) {
@@ -1459,49 +1477,58 @@
     function drawDot(ctx, st, auto) {
       ctx.save();
       inkStyle(ctx, st, auto);
-      const base = st.e ? st.w * 5 : st.w;
+      const base = (st.w || 3) * (st.e ? 5 : 1);
       ctx.beginPath();
-      ctx.arc(st.p[0], st.p[1], Math.max(0.5, base * st.p[2] / 2), 0, Math.PI * 2);
+      ctx.arc(st.p[0], st.p[1], Math.max(0.5, base * (st.p[2] || 1) / 2), 0, Math.PI * 2);
       ctx.fill();
       ctx.restore();
     }
 
+    // one variable-width quadratic bezier (start/control/end), drawn as short flat runs of matching width.
+    // Sampling the width along the curve keeps the stroke tapering smoothly instead of jumping at each point.
+    function quadVar(ctx, x0, y0, w0, cx, cy, wc, x1, y1, w1) {
+      const d = Math.hypot(x1 - x0, y1 - y0) + Math.hypot(cx - x0, cy - y0);
+      const steps = clamp(Math.ceil(d / 6), 2, 8);
+      let px = x0, py = y0, pw = w0;
+      for (let i = 1; i <= steps; i++) {
+        const t = i / steps, mt = 1 - t;
+        const x = mt * mt * x0 + 2 * mt * t * cx + t * t * x1;
+        const y = mt * mt * y0 + 2 * mt * t * cy + t * t * y1;
+        const w = mt * mt * w0 + 2 * mt * t * wc + t * t * w1;
+        ctx.beginPath();
+        ctx.moveTo(px, py);
+        ctx.lineTo(x, y);
+        ctx.lineWidth = Math.max(0.35, (pw + w) / 2);
+        ctx.stroke();
+        px = x; py = y; pw = w;
+      }
+    }
+
     // Curve i (1 .. n-2) bends towards point i and runs between the midpoints on either side of it, so the
-    // line is smooth without lagging behind the pen. Returns the next curve index to draw.
+    // line is smooth without lagging behind the pen. Width is interpolated point-to-point (Xournal++-style),
+    // so the stroke tapers continuously. Returns the next curve index to draw.
     function drawSegments(ctx, st, auto, from, final) {
       const p = st.p, n = p.length / 3;
       if (n < 2) return from;
-      const base = st.e ? st.w * 5 : st.w;
-      const X = (k) => p[k * 3], Y = (k) => p[k * 3 + 1], F = (k) => p[k * 3 + 2];
+      const base = (st.w || 3) * (st.e ? 5 : 1);
+      const X = (k) => p[k * 3], Y = (k) => p[k * 3 + 1], F = (k) => p[k * 3 + 2] || 1;
       const MX = (k) => (X(k) + X(k + 1)) / 2, MY = (k) => (Y(k) + Y(k + 1)) / 2;
+      const W = (k) => base * F(k);
+      const WA = (k) => (W(k) + W(k + 1)) / 2;              // width at the midpoint between two points
       ctx.save();
       inkStyle(ctx, st, auto);
       if (n === 2) {
-        if (final) {
-          ctx.lineWidth = base * (F(0) + F(1)) / 2;
-          ctx.beginPath();
-          ctx.moveTo(X(0), Y(0));
-          ctx.lineTo(X(1), Y(1));
-          ctx.stroke();
-        }
+        quadVar(ctx, X(0), Y(0), W(0), (X(0) + X(1)) / 2, (Y(0) + Y(1)) / 2, (W(0) + W(1)) / 2, X(1), Y(1), W(1));
         ctx.restore();
         return from;
       }
       let k = Math.max(1, from);
       for (; k <= n - 2; k++) {
-        const sx = k === 1 ? X(0) : MX(k - 1), sy = k === 1 ? Y(0) : MY(k - 1);
-        ctx.lineWidth = base * F(k);
-        ctx.beginPath();
-        ctx.moveTo(sx, sy);
-        ctx.quadraticCurveTo(X(k), Y(k), MX(k), MY(k));
-        ctx.stroke();
+        const ax = k === 1 ? X(0) : MX(k - 1), ay = k === 1 ? Y(0) : MY(k - 1);
+        quadVar(ctx, ax, ay, k === 1 ? W(0) : WA(k - 1), X(k), Y(k), W(k), MX(k), MY(k), WA(k));
       }
       if (final) {                                         // the last little stretch up to the final point
-        ctx.lineWidth = base * F(n - 1);
-        ctx.beginPath();
-        ctx.moveTo(MX(n - 2), MY(n - 2));
-        ctx.lineTo(X(n - 1), Y(n - 1));
-        ctx.stroke();
+        quadVar(ctx, MX(n - 2), MY(n - 2), WA(n - 2), X(n - 1), Y(n - 1), W(n - 1), X(n - 1), Y(n - 1), W(n - 1));
       }
       ctx.restore();
       return k;
@@ -1530,11 +1557,9 @@
       const t = clamp(len2 ? ((px - ax) * dx + (py - ay) * dy) / len2 : 0, 0, 1);
       return Math.hypot(px - (ax + dx * t), py - (ay + dy * t));
     }
-    // stroke eraser: remove every whole stroke passing near the point; true if anything went
-    function eraseStrokeAt(c, x, y) {
-      const p = c.pad;
-      if (!p) return false;
-      const keep = p.rec.ink.filter((st) => {
+    // stroke eraser: remove every whole stroke passing near the point (in place); true if anything went
+    function eraseStrokes(list, x, y) {
+      const keep = list.filter((st) => {
         const pts = st.p, R = 8 + (st.w || 3);
         for (let i = 0; i < pts.length; i += 3) {
           const ax = pts[i], ay = pts[i + 1];
@@ -1544,8 +1569,15 @@
         }
         return true;
       });
-      if (keep.length === p.rec.ink.length) return false;
-      p.rec.ink = keep;
+      if (keep.length === list.length) return false;
+      list.length = 0;
+      keep.forEach((s) => list.push(s));
+      return true;
+    }
+    function eraseStrokeAt(c, x, y) {
+      const p = c.pad;
+      if (!p) return false;
+      if (!eraseStrokes(p.rec.ink, x, y)) return false;
       p.redo = [];
       return true;
     }
@@ -1566,7 +1598,8 @@
       const p = c.pad;
       if (ev.pointerType === 'touch') { p.brush.hidden = true; return; }     // a finger has no pointer to show
       const r = p.canvas.getBoundingClientRect();
-      const x = (ev.clientX - r.left) / state.zoom, y = (ev.clientY - r.top) / state.zoom;
+      const sc = viewScale(c);
+      const x = (ev.clientX - r.left) / sc, y = (ev.clientY - r.top) / sc;
       p.brush.hidden = false;
       p.brush.style.transform = `translate(${x - p.brushR}px, ${y - p.brushR}px)`;
     }
@@ -1888,16 +1921,18 @@
         if (e.pointerType === 'touch' && (performance.now() - pad.penAt < 1200 || (e.width || 0) > 40)) return;
         e.preventDefault();
         cv.focus({ preventScroll: true });
-        cv.setPointerCapture(e.pointerId);
+        try { cv.setPointerCapture(e.pointerId); } catch { /* ignore */ }
         pad.drawing = e.pointerId;
         const toData = (ev) => {
           const r = cv.getBoundingClientRect();
-          return { x: (ev.clientX - r.left) / state.zoom, y: (ev.clientY - r.top) / state.zoom };
+          const sc = viewScale(c);
+          return { x: (ev.clientX - r.left) / sc, y: (ev.clientY - r.top) / sc };
         };
         // stroke eraser: sweeping removes every whole stroke it touches
         if (pad.tool === 'stroke') {
           const sweep = (ev) => {
-            const evs = ev.getCoalescedEvents ? ev.getCoalescedEvents() : [ev];
+            const evs = (ev.getCoalescedEvents && ev.getCoalescedEvents()) || [];
+            if (!evs.length) evs.push(ev);
             let hit = false;
             evs.forEach((x) => { const p0 = toData(x); if (eraseStrokeAt(c, p0.x, p0.y)) hit = true; });
             if (hit) { renderInk(c); scheduleSave(c); }
@@ -1930,7 +1965,8 @@
         // width comes from pen pressure, or from speed for a mouse / finger (slower = a touch thicker, like ink)
         const add = (ev, first, k) => {
           const r = cv.getBoundingClientRect();
-          const rx = (ev.clientX - r.left) / state.zoom, ry = (ev.clientY - r.top) / state.zoom;
+          const sc = viewScale(c);
+          const rx = (ev.clientX - r.left) / sc, ry = (ev.clientY - r.top) / sc;
           const gain = k || (ev.pointerType === 'pen' ? 0.72 : 0.55);
           const x = first ? rx : sx + (rx - sx) * gain, y = first ? ry : sy + (ry - sy) * gain;
           const dist = Math.hypot(x - sx, y - sy);
@@ -1948,8 +1984,9 @@
           nextSeg = drawSegments(ctx, stroke, auto, nextSeg, final);
         };
 
-        sx = (e.clientX - cv.getBoundingClientRect().left) / state.zoom;
-        sy = (e.clientY - cv.getBoundingClientRect().top) / state.zoom;
+        const _r0 = cv.getBoundingClientRect();
+        sx = (e.clientX - _r0.left) / viewScale(c);
+        sy = (e.clientY - _r0.top) / viewScale(c);
         lastT = e.timeStamp;
         add(e, true);
         stroke.x0 = sx; stroke.y0 = sy; stroke.f0 = f;
@@ -2009,7 +2046,7 @@
         if (e.button !== 0) return;
         e.preventDefault();
         e.stopPropagation();
-        handle.setPointerCapture(e.pointerId);
+        try { handle.setPointerCapture(e.pointerId); } catch { /* ignore */ }
         const start = { x: e.clientX, y: e.clientY, w: c.el.offsetWidth, h: c.el.offsetHeight, cx: c.x, pw: el.offsetWidth };
         let rzAnim = 0, lx = e.clientX, ly = e.clientY;
         setFast(true);
@@ -2180,48 +2217,164 @@
     }
 
     // ---------- handwriting on the article itself (overlay canvas inside the card body) ----------
+    const PAGE_INK_COLORS = ['#1e293b', '#c0392b', '#d35400', '#1e8449', '#2563eb', '#7c3aed'];
+
+    // the toolbar lives in the card, or in the full-view article, depending on the mode
+    function mountPageInkBar(c) {
+      const pi = c.pageInk;
+      if (!pi) return;
+      const host = c.fullView ? fullArticle : c.el;
+      if (pi.bar.parentElement !== host) host.appendChild(pi.bar);
+    }
+
     function createPageInk(c) {
       const cv = document.createElement('canvas');
       cv.className = 'wc-pageink';
       c.body.appendChild(cv);
+
+      const bar = document.createElement('div');
+      bar.className = 'wc-pageink-bar';
+      bar.innerHTML = `
+        <span class="wc-pib-title">✐ On the article</span>
+        <button class="wc-ink-tool on" data-tool="pen" title="Pen">✎</button>
+        <button class="wc-ink-tool" data-tool="eraser" title="Pixel eraser">⌫</button>
+        <button class="wc-ink-tool" data-tool="stroke" title="Stroke eraser (removes whole strokes)">⊘</button>
+        <span class="wc-sep"></span>
+        <span class="wc-ink-colors"></span>
+        <span class="wc-sep"></span>
+        <button class="wc-ink-w" data-w="1.5" title="Fine"><i style="width:2px;height:2px"></i></button>
+        <button class="wc-ink-w on" data-w="3" title="Medium"><i style="width:4px;height:4px"></i></button>
+        <button class="wc-ink-w" data-w="6" title="Bold"><i style="width:7px;height:7px"></i></button>
+        <button class="wc-ink-w" data-w="12" title="Marker"><i style="width:11px;height:11px"></i></button>
+        <span class="wc-sep"></span>
+        <button class="wc-ink-undo" title="Undo">↶</button>
+        <button class="wc-ink-redo" title="Redo">↷</button>
+        <button class="wc-ink-clear" title="Erase all writing on the article">⌦</button>
+        <span class="wc-pib-grow"></span>
+        <button class="wc-pib-x" title="Stop writing on the article">Done</button>`;
       const pi = c.pageInk = {
-        canvas: cv, active: false, drawing: null,
+        canvas: cv, bar, active: false, drawing: null, redo: [],
         strokes: (c.pad && c.pad.rec.pageInk) || [],
+        tool: 'pen', pen: PAGE_INK_COLORS[0], width: 3,
       };
+      mountPageInkBar(c);
+
+      const colorsBox = bar.querySelector('.wc-ink-colors');
+      PAGE_INK_COLORS.forEach((v) => {
+        const b = document.createElement('button');
+        b.className = 'wc-ink-c';
+        b.dataset.c = v;
+        b.style.background = v;
+        b.title = 'Ink color';
+        colorsBox.appendChild(b);
+      });
+      pi.syncBar = () => {
+        bar.querySelectorAll('.wc-ink-tool').forEach((b) => b.classList.toggle('on', b.dataset.tool === pi.tool));
+        bar.querySelectorAll('.wc-ink-c').forEach((b) => b.classList.toggle('on', b.dataset.c === pi.pen));
+        bar.querySelectorAll('.wc-ink-w').forEach((b) => b.classList.toggle('on', Number(b.dataset.w) === pi.width));
+      };
+
+      bar.addEventListener('pointerdown', (e) => e.stopPropagation());
+      bar.addEventListener('click', (e) => {
+        const t = e.target.closest('button');
+        if (!t || !c.padLoaded) return;
+        if (t.classList.contains('wc-ink-tool')) pi.tool = t.dataset.tool;
+        else if (t.classList.contains('wc-ink-c')) { pi.pen = t.dataset.c; pi.tool = 'pen'; }
+        else if (t.classList.contains('wc-ink-w')) pi.width = Number(t.dataset.w);
+        else if (t.classList.contains('wc-ink-undo')) pageInkUndo(c);
+        else if (t.classList.contains('wc-ink-redo')) pageInkRedo(c);
+        else if (t.classList.contains('wc-ink-clear')) {
+          if (pi.strokes.length) wcConfirm('Erase all writing on this article?').then((ok) => {
+            if (!ok) return;
+            pi.strokes = []; pi.redo = [];
+            c.pad.rec.pageInk = pi.strokes;
+            renderPageInk(c); savePageInk(c);
+          });
+        } else if (t.classList.contains('wc-pib-x')) togglePageInk(c);
+        pi.syncBar();
+      });
+
       const toData = (ev) => {
         const r = cv.getBoundingClientRect();
-        return { x: (ev.clientX - r.left) / state.zoom, y: (ev.clientY - r.top) / state.zoom };
+        const sc = viewScale(c);
+        return { x: (ev.clientX - r.left) / sc, y: (ev.clientY - r.top) / sc };
       };
+
+      cv.tabIndex = 0;
+      cv.addEventListener('keydown', (e) => {
+        if (!(e.ctrlKey || e.metaKey)) return;
+        const k = (e.key || '').toLowerCase();
+        if (k === 'z' && !e.shiftKey) { e.preventDefault(); e.stopPropagation(); pageInkUndo(c); }
+        else if ((k === 'z' && e.shiftKey) || k === 'y') { e.preventDefault(); e.stopPropagation(); pageInkRedo(c); }
+      });
       cv.addEventListener('pointerdown', (e) => {
         if (!pi.active || pi.drawing !== null) return;
         if (e.pointerType === 'mouse' && e.button !== 0) return;
         e.preventDefault();
         e.stopPropagation();
-        cv.setPointerCapture(e.pointerId);
+        cv.focus({ preventScroll: true });
+        try { cv.setPointerCapture(e.pointerId); } catch { /* ignore */ }
         pi.drawing = e.pointerId;
-        const eraser = !!(c.pad && (c.pad.tool === 'eraser' || c.pad.tool === 'stroke'));
-        const stroke = { w: 3, e: eraser, p: [] };
-        pi.strokes.push(stroke);
         const dpr = window.devicePixelRatio || 1;
         const ctx = cv.getContext && cv.getContext('2d');
-        let sx = 0, sy = 0, nextSeg = 1;
-        const p0 = toData(e);
-        sx = p0.x; sy = p0.y;
-        stroke.p.push(Math.round(sx * 10) / 10, Math.round(sy * 10) / 10, 1);
+
+        // stroke eraser: sweeping removes every whole stroke it touches
+        if (pi.tool === 'stroke') {
+          const sweep = (ev) => {
+            const evs = (ev.getCoalescedEvents && ev.getCoalescedEvents()) || [];
+            if (!evs.length) evs.push(ev);
+            let hit = false;
+            evs.forEach((x) => { const q = toData(x); if (eraseStrokes(pi.strokes, q.x, q.y)) hit = true; });
+            if (hit) { c.pad.rec.pageInk = pi.strokes; renderPageInk(c); savePageInk(c); }
+          };
+          sweep(e);
+          const mv = (ev) => sweep(ev);
+          const up = (ev) => {
+            cv.removeEventListener('pointermove', mv);
+            cv.removeEventListener('pointerup', up);
+            cv.removeEventListener('pointercancel', up);
+            try { cv.releasePointerCapture(ev.pointerId); } catch { /* ignore */ }
+            pi.drawing = null;
+          };
+          cv.addEventListener('pointermove', mv);
+          cv.addEventListener('pointerup', up);
+          cv.addEventListener('pointercancel', up);
+          return;
+        }
+
+        const eraser = pi.tool === 'eraser';
+        const stroke = { c: eraser ? null : pi.pen, w: pi.width, e: eraser, p: [] };
+        pi.strokes.push(stroke);
+        pi.redo = [];
+        let sx = 0, sy = 0, f = 1, lastT = 0, nextSeg = 1;
+        // same stabilizer + speed/pressure width as the pad
+        const add = (ev, first, k) => {
+          const r = cv.getBoundingClientRect();
+          const sc = viewScale(c);
+          const rx = (ev.clientX - r.left) / sc, ry = (ev.clientY - r.top) / sc;
+          const gain = k || (ev.pointerType === 'pen' ? 0.72 : 0.55);
+          const x = first ? rx : sx + (rx - sx) * gain, y = first ? ry : sy + (ry - sy) * gain;
+          const dist = Math.hypot(x - sx, y - sy);
+          if (!first && dist < 0.4) return;
+          let target = 1;
+          if (ev.pointerType === 'pen') target = 0.35 + 1.3 * (ev.pressure || 0.5);
+          else if (!first) target = 1.25 - 0.45 * Math.min(1, (dist / Math.max(1, ev.timeStamp - lastT)) / 1.2);
+          f = first ? target : f * 0.7 + target * 0.3;
+          sx = x; sy = y; lastT = ev.timeStamp;
+          stroke.p.push(Math.round(x * 10) / 10, Math.round(y * 10) / 10, Math.round(f * 100) / 100);
+        };
         const paint = (final) => {
           if (!ctx) return;
           ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-          nextSeg = drawSegments(ctx, stroke, '#1e293b', nextSeg, final);
+          nextSeg = drawSegments(ctx, stroke, stroke.c || pi.pen, nextSeg, final);
         };
-        if (ctx) { ctx.setTransform(dpr, 0, 0, dpr, 0, 0); drawDot(ctx, stroke, '#1e293b'); }
+        const p0 = toData(e);
+        sx = p0.x; sy = p0.y; lastT = e.timeStamp;
+        add(e, true);
+        if (ctx) { ctx.setTransform(dpr, 0, 0, dpr, 0, 0); drawDot(ctx, stroke, stroke.c || pi.pen); }
         const mv = (ev) => {
-          const evs = ev.getCoalescedEvents ? ev.getCoalescedEvents() : [ev];
-          evs.forEach((x) => {
-            const p = toData(x);
-            if (Math.hypot(p.x - sx, p.y - sy) < 0.6) return;
-            sx = p.x; sy = p.y;
-            stroke.p.push(Math.round(sx * 10) / 10, Math.round(sy * 10) / 10, 1);
-          });
+          const evs = ev.getCoalescedEvents ? ev.getCoalescedEvents() : [];
+          (evs.length ? evs : [ev]).forEach((x) => add(x, false));
           paint(false);
         };
         const up = (ev) => {
@@ -2229,8 +2382,7 @@
           cv.removeEventListener('pointerup', up);
           cv.removeEventListener('pointercancel', up);
           try { cv.releasePointerCapture(ev.pointerId); } catch { /* ignore */ }
-          const p = toData(ev);
-          stroke.p.push(Math.round(p.x * 10) / 10, Math.round(p.y * 10) / 10, 1);
+          add(ev, false, 1);
           paint(true);
           pi.drawing = null;
           savePageInk(c);
@@ -2239,6 +2391,22 @@
         cv.addEventListener('pointerup', up);
         cv.addEventListener('pointercancel', up);
       });
+      pi.syncBar();
+    }
+
+    function pageInkUndo(c) {
+      const pi = c.pageInk;
+      if (!pi || !pi.strokes.length) return;
+      pi.redo.push(pi.strokes.pop());
+      renderPageInk(c);
+      savePageInk(c);
+    }
+    function pageInkRedo(c) {
+      const pi = c.pageInk;
+      if (!pi || !pi.redo.length) return;
+      pi.strokes.push(pi.redo.pop());
+      renderPageInk(c);
+      savePageInk(c);
     }
 
     function sizePageInk(c) {
@@ -2252,7 +2420,8 @@
       cv.style.width = w + 'px';
       cv.style.height = h + 'px';
       const W = Math.round(w * dpr), H = Math.round(h * dpr);
-      if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; }
+      if (cv.width === W && cv.height === H) return;       // nothing to redraw
+      cv.width = W; cv.height = H;
       renderPageInk(c);
     }
 
@@ -2264,7 +2433,7 @@
       const dpr = window.devicePixelRatio || 1;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, pi.canvas.clientWidth, pi.canvas.clientHeight);
-      pi.strokes.forEach((st) => drawStroke(ctx, st, '#1e293b'));
+      pi.strokes.forEach((st) => drawStroke(ctx, st, st.c || PAGE_INK_COLORS[0]));
     }
 
     function savePageInk(c) {
@@ -2278,19 +2447,25 @@
       if (c.pageInk && c.pageInk.active) {
         c.pageInk.active = false;
         c.el.querySelector('.wc-pageinkbtn').classList.toggle('on', false);
-        c.pageInk.canvas.classList.toggle('on', false);
+        if (fullPageInkBtn) fullPageInkBtn.classList.toggle('on', false);
+        c.pageInk.canvas.classList.remove('on');
+        c.pageInk.bar.classList.remove('on');
         savePageInk(c);
         return;
       }
       loadPad(c, () => {
         if (!c.pageInk) createPageInk(c);
         else c.pageInk.strokes = c.pad.rec.pageInk || c.pageInk.strokes;
-        c.pageInk.active = true;
+        const pi = c.pageInk;
+        pi.active = true;
+        pi.syncBar();
         c.el.querySelector('.wc-pageinkbtn').classList.toggle('on', true);
+        if (fullPageInkBtn) fullPageInkBtn.classList.toggle('on', state.full === c);
         sizePageInk(c);
-        c.pageInk.canvas.classList.toggle('on', true);
+        pi.canvas.classList.add('on');
+        pi.bar.classList.add('on');
         afterLoad(c, () => { if (c.pageInk && c.pageInk.active) sizePageInk(c); });
-        showToast('Writing on the article — toggle ✐ to stop');
+        showToast('Writing on the article — ✐ (or Done) to stop');
       });
     }
 
@@ -2333,6 +2508,11 @@
       full.hidden = false;
       root.classList.add('wc-fullview');
       setFullNotes(state.fullNotes);
+      if (fullPageInkBtn) fullPageInkBtn.classList.toggle('on', !!(c.pageInk && c.pageInk.active));
+      if (c.pageInk) {
+        mountPageInkBar(c);
+        requestAnimationFrame(() => { if (state.full === c && c.pageInk.active) sizePageInk(c); });
+      }
       scheduleMarks();
     }
 
@@ -2347,6 +2527,11 @@
       }
       c.fullView = false;
       state.full = null;
+      if (fullPageInkBtn) fullPageInkBtn.classList.remove('on');
+      if (c.pageInk) {
+        mountPageInkBar(c);
+        if (c.pageInk.active) requestAnimationFrame(() => sizePageInk(c));
+      }
       if (!keepOpen) {
         full.hidden = true;
         vp.style.visibility = '';
@@ -2361,12 +2546,13 @@
 
     fullBack.addEventListener('click', () => exitFull(false));
     fullNotesBtn.addEventListener('click', () => setFullNotes(!state.fullNotes));
+    if (fullPageInkBtn) fullPageInkBtn.addEventListener('click', () => { if (state.full) togglePageInk(state.full); });
 
     // drag the divider between article and notes to resize the notes column
     if (fullDiv) fullDiv.addEventListener('pointerdown', (e) => {
       if (e.button !== 0 || fullSide.hidden) return;
       e.preventDefault();
-      fullDiv.setPointerCapture(e.pointerId);
+      try { fullDiv.setPointerCapture(e.pointerId); } catch { /* ignore */ }
       const startW = fullSide.offsetWidth, sx = e.clientX;
       const left = fullMain.classList.contains('wc-notes-left');
       let dvAnim = 0, lx = sx;
@@ -2374,6 +2560,8 @@
         dvAnim = 0;
         state.fullSideW = clamp(Math.round(startW + (left ? (lx - sx) : (sx - lx))), 240, 720);
         applyFullSideW();
+        const cur = state.full;
+        if (cur && cur.pageInk && cur.pageInk.active) sizePageInk(cur);
       };
       const mv = (ev) => { lx = ev.clientX; if (!dvAnim) dvAnim = requestAnimationFrame(step); };
       const up = (ev) => {
@@ -2884,13 +3072,21 @@
         ['labelColors', 'customLabels', 'recentLabels', 'hlColor', 'showDots', 'fullSideW'].forEach((k) => {
           if (all && all[k] !== undefined) prefs[k] = all[k];
         });
+        // carry the article HTML of every card, so an import opens offline
+        const pages = {};
+        state.cards.forEach((c) => {
+          const html = pageCache.get(c.title) || pageCache.get(String(c.title).replace(/_/g, ' '));
+          if (html) pages[c.title] = html;
+        });
         const backup = {
-          app: 'wiki-canvas', v: 1, lang: WC_LANG,
+          app: 'wiki-canvas', v: 2, lang: WC_LANG,
           savedAt: new Date().toISOString(),
-          canvas: snapshotCanvas(), pads, prefs,
+          canvas: snapshotCanvas(), pads, prefs, pages,
         };
-        const saved = await WCStore.exportFile('wiki-canvas-' + WC_LANG + '.json', JSON.stringify(backup));
-        showToast(saved ? 'Exported canvas (' + WC_LANG + ')' : 'Export cancelled');
+        const text = JSON.stringify(backup);
+        const size = (text.length / 1048576).toFixed(1);
+        const saved = await WCStore.exportFile('wiki-canvas-' + WC_LANG + '.json', text);
+        showToast(saved ? 'Exported ' + Object.keys(pages).length + ' cached page(s), ' + size + ' MB' : 'Export cancelled');
       } catch (e) { showToast('Export failed: ' + (e && e.message || e)); }
     }
 
@@ -2914,6 +3110,12 @@
     async function applyBackup(obj) {
       try {
         const target = obj.lang || WC_LANG;
+        // seed the page cache first: cards then render from the file instead of the network
+        if (obj.pages && typeof obj.pages === 'object') {
+          Object.keys(obj.pages).forEach((t) => {
+            if (typeof obj.pages[t] === 'string') pageCache.set(t, obj.pages[t]);
+          });
+        }
         const merged = Object.assign({}, obj.pads, obj.prefs);
         if (Object.keys(merged).length) {
           await new Promise((res) => chrome.storage.local.set(merged, res));
