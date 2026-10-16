@@ -91,7 +91,6 @@
   let pageDir = WC.dir || (RTL_LANGS.includes(WC_LANG) ? 'rtl' : 'ltr');
   let pageLang = WC_LANG;
   let WC_API = 'https://' + WC_LANG + '.wikipedia.org';
-  const WC_HOST = () => WC_LANG + '.wikipedia.org';
 
   // Localized namespace names (e.g. fa: ویژه:, رده:) from this wiki's own API
   let nsRe = NS;
@@ -128,7 +127,7 @@
   boot();
 
   function boot() {
-    const state = { x: 0, y: 0, zoom: 1, cards: [], trails: [], notes: [], z: 10, nextId: 1, linkDrag: null, dots: true, inkZoom: 1, inkTimer: 0, full: null, sel: null, fullNotes: true, hlColor: 'yellow', fullSideW: 0 };
+    const state = { x: 0, y: 0, zoom: 1, cards: [], trails: [], notes: [], z: 10, nextId: 1, linkDrag: null, dots: true, inkZoom: 1, inkTimer: 0, full: null, sel: null, fullNotes: true, hlColor: 'yellow', fullSideW: 0, doc: null, libraryOn: false };
     const cardByEl = new WeakMap();
     const keyOf = (t) => t.replace(/_/g, ' ').trim().toLowerCase();
 
@@ -212,8 +211,9 @@
     if (pageDir === 'rtl') root.classList.add('wc-rtl');
     root.innerHTML = `
       <div class="wc-bar">
-        <span class="wc-brand">Wikipedia · canvas</span>
-        <select class="wc-lang" title="Wikipedia language">
+        <button data-act="library" class="wc-lib-btn" title="Library: your folders and documents">${icon('library')}Library</button>
+        <span class="wc-docname wc-brand" dir="auto">Library</span>
+        <select class="wc-lang" title="Wikipedia language for this notebook">
           <option value="en">English</option>
           <option value="fa">فارسی</option>
           <option value="ar">العربية</option>
@@ -269,7 +269,36 @@
       <div class="wc-ctx" hidden><button data-a="add">Add to Notes</button><div class="wc-ctx-hl"><span>Highlight</span><span class="wc-ctx-colors"></span></div><button data-a="copy">Copy</button></div>
       <div class="wc-toast" hidden></div>
       <div class="wc-preview" hidden></div>
-      <div class="wc-ghost" hidden></div>`;
+      <div class="wc-ghost" hidden></div>
+      <div class="wc-lib" hidden>
+        <aside class="wc-lib-side">
+          <div class="wc-lib-sidebrand">Wiki Canvas</div>
+          <div class="wc-lib-navs">
+            <button class="wc-lib-nav on" data-folder="all">All documents</button>
+          </div>
+          <div class="wc-lib-folders"></div>
+          <button class="wc-lib-newfolder">New folder</button>
+        </aside>
+        <main class="wc-lib-main">
+          <header class="wc-lib-top">
+            <h1 class="wc-lib-title">All documents</h1>
+            <span class="wc-lib-count"></span>
+            <span class="wc-grow"></span>
+            <input class="wc-lib-search" type="text" placeholder="Search documents" dir="auto" autocomplete="off" spellcheck="false">
+            <select class="wc-lib-sort" title="Sort the documents">
+              <option value="recent">Last opened</option>
+              <option value="added">Date added</option>
+              <option value="name">Name</option>
+            </select>
+            <button class="wc-lib-renfolder" hidden>Rename folder</button>
+            <button class="wc-lib-delfolder" hidden>Delete folder</button>
+            <button class="wc-lib-newdoc">New document</button>
+            <button class="wc-lib-back" title="Back to the canvas (Esc)">Back to canvas</button>
+          </header>
+          <div class="wc-lib-grid"></div>
+          <div class="wc-lib-hint" hidden></div>
+        </main>
+      </div>`;
     const bar = root.querySelector('.wc-bar');
     const vp = root.querySelector('.wc-viewport');
     const world = root.querySelector('.wc-world');
@@ -733,17 +762,20 @@
       }
     }
 
-    async function fetchPage(title) {
-      const key = String(title).replace(/_/g, ' ');
-      const hit = pageCache.get(key) || pageCache.get(title);
-      if (hit) return { title: key, html: hit };
-      const url = `${WC_API}/w/api.php?action=parse&page=${encodeURIComponent(title)}` +
+    async function fetchPage(title, lang) {
+      // the language is part of the key: two notebooks can hold the same title in
+      // different Wikipedias, and an export has to be able to tell those pages apart
+      const lg = lang || WC_LANG;
+      const key = lg + ':' + String(title).replace(/_/g, ' ');
+      const hit = pageCache.get(key) || pageCache.get(lg + ':' + title);
+      if (hit) return { title: String(title).replace(/_/g, ' '), html: hit };
+      const url = `https://${lg}.wikipedia.org/w/api.php?action=parse&page=${encodeURIComponent(title)}` +
         '&prop=text&redirects=1&disableeditsection=1&disablelimitreport=1&format=json&formatversion=2';
       const j = await getJSON(url);
       if (j.error) throw new Error(j.error.info || j.error.code);
       if (!j.parse || !j.parse.text) throw new Error('the page had no text');
       const resolved = j.parse.title;
-      pageCacheSet(resolved, j.parse.text);
+      pageCacheSet(lg + ':' + resolved, j.parse.text);
       pageCacheSet(key, j.parse.text);
       return { title: resolved, html: j.parse.text };
     }
@@ -797,6 +829,7 @@
         <div class="wc-body wc-loading">Loading…</div>`;
       const c = {
         uid: state.nextId++, key: k, canon: null, title: o.title, x: o.x, y: o.y, minimized: false,
+        lang: o.lang || WC_LANG,
         pad: null, padOpen: false, padBox: null, padLoaded: false, padKeyUsed: null, padTimer: 0, hasNotes: false,
         fullView: false, loadQ: null, padLoading: false, padQ: null, marks: null, markRanges: [], flatCache: null,
         el, head: el.querySelector('.wc-head'), body: el.querySelector('.wc-body'),
@@ -879,7 +912,7 @@
         fill(c, [clean(o.liveNode)]);
         if (o.hash) setTimeout(() => scrollToId(c, o.hash), 60);
       } else {
-        fetchPage(o.title).then((page) => {
+        fetchPage(o.title, c.lang).then((page) => {
           setTitle(c, page.title);
           const doc = new DOMParser().parseFromString(page.html, 'text/html');
           fill(c, [...clean(doc.body).childNodes]);
@@ -924,7 +957,7 @@
       const a = anchorWorld(parent, anchor);
       const pb = rectOf(parent);
       const p = freeSpot(pb.x + pb.w + 90, Math.max(parent.y, a.y - 40), w, h);
-      createCard({ title, x: p.x, y: p.y, w, h, parent, anchor, hash });
+      createCard({ title, x: p.x, y: p.y, w, h, parent, anchor, hash, lang: parent.lang });
     }
 
     // ---------- links: click opens, drag places ----------
@@ -1012,7 +1045,7 @@
       const w = screenToWorld(ev.clientX, ev.clientY);
       createCard({
         title: d.title, x: w.x - 40, y: w.y - 16, w: 420, h: 480,
-        parent: d.parent, anchor: d.anchor, hash: hashOf(d.anchor),
+        parent: d.parent, anchor: d.anchor, hash: hashOf(d.anchor), lang: d.parent.lang,
       });
     }
 
@@ -1047,6 +1080,7 @@
           break;
         }
         case 'dots': setDots(!state.dots, true); break;
+        case 'library': showLibrary(); break;
         case 'export': exportCanvas(); break;
         case 'import': importCanvasFile(); break;
         case 'full': toggleFull(); break;
@@ -1072,7 +1106,7 @@
       const r = vp.getBoundingClientRect();
       const c = screenToWorld(r.left + r.width / 2, r.top + r.height / 2);
       const p = freeSpot(c.x - 210, c.y - 240, 420, 480);
-      const nc = createCard({ title: t, x: p.x, y: p.y, w: 420, h: 480 });
+      const nc = createCard({ title: t, x: p.x, y: p.y, w: 420, h: 480, lang: WC_LANG });
       if (state.full) enterFull(nc);
     }
 
@@ -1102,6 +1136,7 @@
     input.addEventListener('blur', () => { results.hidden = true; });
 
     document.addEventListener('keydown', (e) => {
+      if (state.libraryOn) return;                 // the library owns its own keys
       if (e.key === 'F11') { e.preventDefault(); toggleFull(); return; }
       if (e.key === 'Escape' && !pop.hidden) { closePicker(); return; }
       if (e.key === 'Escape' && (!selBar.hidden || !ctxMenu.hidden || !prevEl.hidden)) { hideSelUI(); hidePreview(); return; }
@@ -1457,7 +1492,9 @@
     }
 
     // ---------- notes attached to a card: typed or handwritten, saved per article ----------
-    const padKey = (c) => `pad:${WC_HOST()}:${c.canon || c.key}`;
+    // notes are keyed by language + article, so a notebook keeps its notes even if you
+    // switch the fetch language, and two languages can hold the same title independently
+    const padKey = (c) => `pad:${c.lang || WC_LANG}.wikipedia.org:${c.canon || c.key}`;
     const hasContent = (r) => !!r.text.trim() || r.ink.length > 0 || (r.pageInk && r.pageInk.length > 0);
 
     // saved record -> {text, color, mode, ink}; older saves were just a string of text
@@ -2702,7 +2739,7 @@
       e.preventDefault();
       const pb = rectOf(c);
       const spot = freeSpot(pb.x + pb.w + 90, c.y, 420, 480);
-      const child = createCard({ title: t, x: spot.x, y: spot.y, w: 420, h: 480, parent: c, anchor: a, hash: hashOf(a), noPicker: true });
+      const child = createCard({ title: t, x: spot.x, y: spot.y, w: 420, h: 480, parent: c, anchor: a, hash: hashOf(a), noPicker: true, lang: c.lang });
       enterFull(child);
     });
 
@@ -3172,9 +3209,12 @@
     async function exportCanvas() {
       try {
         const all = await new Promise((res) => chrome.storage.local.get(null, res));
-        const prefix = 'pad:' + WC_HOST() + ':';
+        // pad keys are language-scoped now, so collect the notes of every language in this canvas
+        const langs = new Set(state.cards.map((c) => c.lang || WC_LANG));
+        langs.add(WC_LANG);
+        const prefixes = [...langs].map((l) => 'pad:' + l + '.wikipedia.org:');
         const pads = {};
-        Object.keys(all || {}).forEach((k) => { if (k.startsWith(prefix)) pads[k] = all[k]; });
+        Object.keys(all || {}).forEach((k) => { if (prefixes.some((p) => k.startsWith(p))) pads[k] = all[k]; });
         const prefs = {};
         ['labelColors', 'customLabels', 'recentLabels', 'hlColor', 'showDots', 'fullSideW'].forEach((k) => {
           if (all && all[k] !== undefined) prefs[k] = all[k];
@@ -3183,8 +3223,9 @@
         const pages = {};
         let pageChars = 0;
         state.cards.forEach((c) => {
-          const html = pageCache.get(c.title) || pageCache.get(String(c.title).replace(/_/g, ' '));
-          if (html) { pages[c.title] = html; pageChars += html.length; }
+          const lg = c.lang || WC_LANG;
+          const html = pageCache.get(lg + ':' + c.title) || pageCache.get(lg + ':' + String(c.title).replace(/_/g, ' '));
+          if (html) { pages[lg + ':' + c.title] = html; pageChars += html.length; }
         });
         if (pageChars > 48 * 1024 * 1024) {
           const mb = Math.round(pageChars / 1048576);
@@ -3196,12 +3237,15 @@
         await new Promise((r) => setTimeout(r, 30));      // let the toast paint before the big stringify
         const backup = {
           app: 'wiki-canvas', v: 2, lang: WC_LANG,
+          doc: state.doc ? state.doc.title : null,
           savedAt: new Date().toISOString(),
           canvas: snapshotCanvas(), pads, prefs, pages,
         };
         const text = JSON.stringify(backup);
         const size = (text.length / 1048576).toFixed(1);
-        const saved = await WCStore.exportFile('wiki-canvas-' + WC_LANG + '.json', text);
+        const base = String((state.doc && state.doc.title) || ('wiki-canvas-' + WC_LANG))
+          .replace(/[^\w\u00c0-\u024f\- ]+/g, '').trim().slice(0, 60) || 'canvas';
+        const saved = await WCStore.exportFile(base + '.json', text);
         showToast(saved ? 'Exported ' + Object.keys(pages).length + ' cached page(s), ' + size + ' MB' : 'Export cancelled');
       } catch (e) { showToast('Export failed: ' + (e && e.message || e)); }
     }
@@ -3240,15 +3284,30 @@
           state.fullSideW = obj.prefs.fullSideW;
           applyFullSideW();
         }
-        if (target !== WC_LANG) {
-          saveCanvasNow();
-          await WCStore.kvSet('canvas_' + target, obj.canvas);
-          if (langSel) langSel.value = target;
-          await switchLang(target);
-        } else {
-          clearCanvasState();
-          loadCanvasData(obj.canvas);
+        if (target !== WC_LANG) await setLang(target);
+        if (!state.doc) {
+          // an import needs a home in the library
+          let home = library.folders[0];
+          if (!home) {
+            home = { id: uid('f_'), name: 'Documents', createdAt: Date.now(), docs: [] };
+            library.folders.push(home);
+          }
+          const first = (obj.canvas.cards && obj.canvas.cards[0] && obj.canvas.cards[0].t) || null;
+          const doc = {
+            id: uid('d_'), title: obj.doc || first || 'Imported canvas',
+            lang: target, addedAt: Date.now(), openedAt: Date.now(),
+          };
+          home.docs.push(doc);
+          state.doc = doc;
+          library.lastDoc = doc.id;
+          libSave();
         }
+        hideLibrary();
+        setDocUI();
+        saveCanvasNow();                       // keep the notebook we are leaving
+        clearCanvasState();
+        loadCanvasData(obj.canvas);
+        saveCanvasNow();                       // persist the imported canvas into the open document
         showToast('Imported canvas (' + target + ')');
       } catch (e) { showToast('Import failed: ' + (e && e.message || e)); }
     }
@@ -3269,8 +3328,9 @@
       state.x = 0; state.y = 0; state.zoom = 1;
     }
 
-    // one file per language: { view, cards, trails, notes } ('_' not ':' — ':' is illegal on Windows)
-    const wcKey = () => 'canvas_' + WC_LANG;
+    // one canvas per library document (see the library below).
+    // '_' not ':' — ':' is illegal in Windows file names.
+    const wcKey = () => 'canvas_' + (state.doc ? state.doc.id : 'scratch');
 
     // ---------- full-view notes width ----------
     function applyFullSideW() {
@@ -3282,7 +3342,7 @@
         view: { x: Math.round(state.x), y: Math.round(state.y), zoom: state.zoom },
         cards: state.cards.map((c) => ({
           t: c.title, x: Math.round(c.x), y: Math.round(c.y),
-          w: c.el.offsetWidth, h: c.el.offsetHeight, min: !!c.minimized,
+          w: c.el.offsetWidth, h: c.el.offsetHeight, min: !!c.minimized, l: c.lang || WC_LANG,
         })),
         trails: state.trails.map((t) => {
           let a = null;
@@ -3298,7 +3358,10 @@
     }
     function saveCanvasNow() {
       try {
-        WCStore.kvSet(wcKey(), snapshotCanvas()).catch(() => {});
+        // never persist an empty "scratch" canvas over a real document
+        if (state.doc || state.cards.length || state.notes.length) {
+          WCStore.kvSet(wcKey(), snapshotCanvas()).catch(() => {});
+        }
         WCStore.kvSet('settings', { lang: WC_LANG }).catch(() => {});
       } catch { /* ignore */ }
     }
@@ -3317,7 +3380,7 @@
       const byKey = new Map();
       (data.cards || []).forEach((s) => {
         if (!s.t) return;
-        const c = createCard({ title: s.t, x: s.x || 40, y: s.y || 40, w: s.w || 420, h: s.h || 480, noPicker: true });
+        const c = createCard({ title: s.t, x: s.x || 40, y: s.y || 40, w: s.w || 420, h: s.h || 480, noPicker: true, lang: s.l || WC_LANG });
         if (s.min) setMin(c, true);
         byKey.set(c.key, c);
       });
@@ -3372,30 +3435,529 @@
       root.classList.toggle('wc-rtl', pageDir === 'rtl');
     }
 
-    async function switchLang(nl) {
-      if (!nl || nl === WC_LANG) return;
-      saveCanvasNow();
-      clearCanvasState();
+    // The toolbar selector picks the Wikipedia language used for new cards. It no longer
+    // swaps notebooks: every document carries its own language, and its canvas is keyed
+    // by the document id, so switching language leaves the open notebook untouched.
+    async function setLang(nl) {
+      if (!nl) return;
       WC_LANG = nl; WC_PAGE.lang = nl;
       WC_API = 'https://' + WC_LANG + '.wikipedia.org';
       pageDir = RTL_LANGS.includes(WC_LANG) ? 'rtl' : 'ltr';
       nsRe = NS; fetchNsRe();
       setLangUI(); applyView(); refreshEmpty();
-      await loadCanvas();
-      scheduleMarks();
+      try { WCStore.kvSet('settings', { lang: nl }).catch(() => {}); } catch { /* ignore */ }
     }
-    if (langSel) langSel.addEventListener('change', () => switchLang(langSel.value));
+    if (langSel) langSel.addEventListener('change', () => setLang(langSel.value));
+
+    // ---------- library: folders + documents (GoodNotes-style) ----------
+    const libEl = root.querySelector('.wc-lib');
+    const libFoldersEl = root.querySelector('.wc-lib-folders');
+    const libGridEl = root.querySelector('.wc-lib-grid');
+    const libTitleEl = root.querySelector('.wc-lib-title');
+    const libCountEl = root.querySelector('.wc-lib-count');
+    const libSearchEl = root.querySelector('.wc-lib-search');
+    const libSortEl = root.querySelector('.wc-lib-sort');
+    const libHintEl = root.querySelector('.wc-lib-hint');
+    const libRenFolderEl = root.querySelector('.wc-lib-renfolder');
+    const libDelFolderEl = root.querySelector('.wc-lib-delfolder');
+    const docNameEl = root.querySelector('.wc-docname');
+
+    let library = { v: 1, folders: [], lastDoc: null };
+    let libFolder = 'all';                       // 'all' or a folder id
+    let libSeq = 0;
+    const libOpen = () => !libEl.hidden;
+
+    const uid = (p) => p + Date.now().toString(36) + (libSeq++).toString(36) + Math.random().toString(36).slice(2, 6);
+    const folderById = (id) => library.folders.find((f) => f.id === id) || null;
+    function folderOfDoc(id) { return library.folders.find((f) => f.docs.some((d) => d.id === id)) || null; }
+    function findDoc(id) { for (const f of library.folders) { const d = f.docs.find((x) => x.id === id); if (d) return d; } return null; }
+    function libSave() { try { WCStore.kvSet('library', library).catch(() => {}); } catch { /* ignore */ } }
+
+    const langLabel = (code) => {
+      const o = langSel && [...langSel.options].find((x) => x.value === code);
+      return o ? o.textContent.trim() : String(code || '').toUpperCase();
+    };
+    function when(ts) {
+      if (!ts) return 'not opened yet';
+      const d = new Date(ts), now = new Date(), day = 86400000;
+      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+      const dd = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+      if (dd === today) return 'today';
+      if (dd === today - day) return 'yesterday';
+      if (dd > today - 6 * day) return Math.round((today - dd) / day) + ' days ago';
+      return d.toLocaleDateString(undefined, {
+        day: 'numeric', month: 'short',
+        year: d.getFullYear() === now.getFullYear() ? undefined : 'numeric',
+      });
+    }
+
+    function visibleDocs() {
+      const q = libSearchEl.value.trim().toLowerCase();
+      let list = [];
+      library.folders.forEach((f) => {
+        if (libFolder !== 'all' && f.id !== libFolder) return;
+        f.docs.forEach((d) => list.push({ folder: f, doc: d }));
+      });
+      if (q) {
+        list = list.filter((e) => (e.doc.title || '').toLowerCase().includes(q) ||
+          (e.folder.name || '').toLowerCase().includes(q));
+      }
+      const by = libSortEl.value;
+      list.sort((a, b) => {
+        if (by === 'name') return (a.doc.title || '').localeCompare(b.doc.title || '');
+        if (by === 'added') return (b.doc.addedAt || 0) - (a.doc.addedAt || 0);
+        return (b.doc.openedAt || b.doc.addedAt || 0) - (a.doc.openedAt || a.doc.addedAt || 0);
+      });
+      return list;
+    }
+
+    function langBadge(doc) {
+      const s = document.createElement('i');
+      s.className = 'wc-doc-lang';
+      s.textContent = doc.lang || WC_LANG;
+      return s;
+    }
+
+    function docCard(folder, doc) {
+      const el = document.createElement('article');
+      el.className = 'wc-doc';
+      el.dataset.id = doc.id;
+      el.title = doc.title;
+
+      const cover = document.createElement('div');
+      cover.className = 'wc-doc-cover';
+      if (doc.cover) {
+        const img = document.createElement('img');
+        img.src = doc.cover;
+        img.loading = 'lazy';
+        img.decoding = 'async';
+        img.draggable = false;
+        cover.appendChild(img);
+      } else {
+        cover.classList.add('wc-doc-nocover');
+        const sp = document.createElement('span');
+        sp.textContent = (doc.title || '?').trim().charAt(0).toUpperCase() || '?';
+        cover.appendChild(sp);
+      }
+
+      const meta = document.createElement('div');
+      meta.className = 'wc-doc-meta';
+      const t = document.createElement('b');
+      t.textContent = doc.title;
+      t.dir = 'auto';
+      const sub = document.createElement('span');
+      sub.append(document.createTextNode((libFolder === 'all' ? folder.name + ' · ' : '')), langBadge(doc),
+        document.createTextNode(' · ' + when(doc.openedAt)));
+      meta.append(t, sub);
+
+      const menu = document.createElement('button');
+      menu.className = 'wc-doc-menu';
+      menu.title = 'Open, rename, move or delete';
+      menu.textContent = '⋯';
+
+      el.append(cover, meta, menu);
+      return el;
+    }
+
+    // covers are fetched lazily, one at a time, so the grid never waits on the network
+    let coverRun = 0;
+    function ensureCovers(list) {
+      const todo = list.filter((e) => e.doc.cover === undefined);
+      if (!todo.length) return;
+      const run = ++coverRun;
+      (async () => {
+        for (const e of todo) {
+          if (run !== coverRun || !libOpen()) return;
+          await fetchCover(e.doc);
+          if (run !== coverRun) return;
+          applyCover(e.doc);
+        }
+      })();
+    }
+    async function fetchCover(doc) {
+      if (doc.cover !== undefined) return;
+      doc.cover = null;
+      try {
+        const j = await getJSON('https://' + (doc.lang || WC_LANG) + '.wikipedia.org/api/rest_v1/page/summary/' +
+          encodeURIComponent(String(doc.title).replace(/ /g, '_')));
+        const src = j && j.thumbnail && j.thumbnail.source;
+        if (src) { doc.cover = src; libSave(); }
+      } catch { /* no cover; the letter tile stays */ }
+    }
+    function applyCover(doc) {
+      if (!doc.cover) return;
+      const el = libGridEl.querySelector('.wc-doc[data-id="' + CSS.escape(doc.id) + '"]');
+      const cv = el && el.querySelector('.wc-doc-cover');
+      if (!cv) return;
+      cv.classList.remove('wc-doc-nocover');
+      const img = document.createElement('img');
+      img.src = doc.cover;
+      img.loading = 'lazy';
+      img.decoding = 'async';
+      img.draggable = false;
+      cv.replaceChildren(img);
+    }
+
+    function renderLibrary() {
+      const total = library.folders.reduce((n, f) => n + f.docs.length, 0);
+      const allBtn = root.querySelector('.wc-lib-nav[data-folder="all"]');
+      allBtn.replaceChildren(document.createTextNode('All documents'));
+      const te = document.createElement('em');
+      te.textContent = String(total);
+      allBtn.appendChild(te);
+      allBtn.classList.toggle('on', libFolder === 'all');
+
+      libFoldersEl.replaceChildren(...library.folders.map((f) => {
+        const b = document.createElement('button');
+        b.className = 'wc-lib-nav' + (libFolder === f.id ? ' on' : '');
+        b.dataset.folder = f.id;
+        b.title = f.name;
+        const n = document.createElement('span');
+        n.className = 'wc-lib-fname';
+        n.textContent = f.name;
+        n.dir = 'auto';
+        const c = document.createElement('em');
+        c.textContent = String(f.docs.length);
+        b.append(n, c);
+        return b;
+      }));
+
+      const f = libFolder === 'all' ? null : folderById(libFolder);
+      if (libFolder !== 'all' && !f) libFolder = 'all';
+      const list = visibleDocs();
+      libTitleEl.textContent = f ? f.name : 'All documents';
+      libCountEl.textContent = list.length ? String(list.length) : '';
+      libRenFolderEl.hidden = !f;
+      libDelFolderEl.hidden = !f;
+      libGridEl.replaceChildren(...list.map((e) => docCard(e.folder, e.doc)));
+      libHintEl.hidden = list.length > 0;
+      if (!list.length) {
+        const term = libSearchEl.value.trim();
+        libHintEl.textContent = term
+          ? 'No document matches “' + term + '”.'
+          : (f ? 'This folder is empty. Use “New document” to add an article.'
+            : 'Your library is empty. Use “New document” to add an article.');
+      }
+      ensureCovers(list);
+    }
+
+    // ---- per-document actions (⋯ menu) ----
+    let docMenu = null;
+    function closeDocMenu() { if (docMenu) { docMenu.remove(); docMenu = null; } }
+    function openDocMenu(anchor, folder, doc) {
+      closeDocMenu();
+      docMenu = document.createElement('div');
+      docMenu.className = 'wc-doc-pop';
+      const add = (label, fn, cls) => {
+        const b = document.createElement('button');
+        b.textContent = label;
+        if (cls) b.className = cls;
+        b.addEventListener('click', () => { closeDocMenu(); fn(); });
+        docMenu.appendChild(b);
+      };
+      add('Open', () => openDoc(doc.id));
+      add('Rename…', () => renameDoc(doc));
+      if (library.folders.length > 1) {
+        const h = document.createElement('div');
+        h.className = 'wc-doc-pop-h';
+        h.textContent = 'Move to';
+        docMenu.appendChild(h);
+        library.folders.filter((x) => x !== folder).forEach((x) =>
+          add('→ ' + x.name, () => moveDoc(doc, x)));
+      }
+      add('Delete', () => deleteDoc(doc), 'wc-doc-pop-del');
+      libEl.appendChild(docMenu);
+      const r = anchor.getBoundingClientRect(), lr = libEl.getBoundingClientRect();
+      const w = docMenu.offsetWidth || 200;
+      docMenu.style.top = (r.bottom - lr.top + 6) + 'px';
+      docMenu.style.left = Math.max(8, Math.min(r.right - lr.left - w, lr.width - w - 8)) + 'px';
+    }
+
+    async function renameDoc(doc) {
+      const name = await wcPrompt('Rename this document', doc.title);
+      if (!name || name === doc.title) return;
+      doc.title = name;
+      libSave();
+      renderLibrary();
+      if (state.doc === doc) setDocUI();
+    }
+    async function moveDoc(doc, to) {
+      const from = folderOfDoc(doc.id);
+      if (!from || from === to) return;
+      from.docs = from.docs.filter((d) => d !== doc);
+      to.docs.push(doc);
+      libSave();
+      renderLibrary();
+      showToast('Moved to ' + to.name);
+    }
+    async function deleteDoc(doc) {
+      const ok = await wcConfirm('Delete “' + doc.title + '”?\n\nIts canvas layout is removed. ' +
+        'Your notes on the article itself are kept.');
+      if (!ok) return;
+      const folder = folderOfDoc(doc.id);
+      try { await WCStore.kvRemove('canvas_' + doc.id); } catch { /* ignore */ }
+      if (folder) folder.docs = folder.docs.filter((d) => d !== doc);
+      if (library.lastDoc === doc.id) library.lastDoc = null;
+      if (state.doc === doc) { state.doc = null; clearCanvasState(); setDocUI(); }
+      libSave();
+      renderLibrary();
+      showToast('Deleted “' + doc.title + '”');
+    }
+
+    // ---- folders ----
+    async function newFolder() {
+      const name = await wcPrompt('Name of the new folder', 'New folder', 'Create');
+      if (!name) return;
+      const f = { id: uid('f_'), name, createdAt: Date.now(), docs: [] };
+      library.folders.push(f);
+      libFolder = f.id;
+      libSave();
+      renderLibrary();
+    }
+    async function renameFolder(f) {
+      const name = await wcPrompt('Rename this folder', f.name);
+      if (!name || name === f.name) return;
+      f.name = name;
+      libSave();
+      renderLibrary();
+    }
+    async function deleteFolder(f) {
+      const extra = f.docs.length ? ' and its ' + f.docs.length + ' document(s)' : '';
+      const ok = await wcConfirm('Delete the folder “' + f.name + '”' + extra + '?\n\nThis cannot be undone.');
+      if (!ok) return;
+      for (const d of f.docs) {
+        try { await WCStore.kvRemove('canvas_' + d.id); } catch { /* ignore */ }
+        if (library.lastDoc === d.id) library.lastDoc = null;
+        if (state.doc === d) { state.doc = null; clearCanvasState(); setDocUI(); }
+      }
+      library.folders = library.folders.filter((x) => x !== f);
+      if (libFolder === f.id) libFolder = 'all';
+      libSave();
+      renderLibrary();
+    }
+
+    // ---- new document: search Wikipedia (or add a fresh blank notebook) ----
+    async function newDocument() {
+      let target = libFolder === 'all' ? null : folderById(libFolder);
+      if (!target) {
+        if (!library.folders.length) {
+          library.folders.push({ id: uid('f_'), name: 'Documents', createdAt: Date.now(), docs: [] });
+          libSave();
+          renderLibrary();
+        }
+        target = library.folders[0];
+      }
+      const shade = document.createElement('div');
+      shade.className = 'wc-dialog-shade';
+      shade.innerHTML = '<div class="wc-dialog wc-newdoc"><p>Add an article to <b></b></p>' +
+        '<div class="wc-newdoc-row"><select class="wc-d-input wc-newdoc-lang" title="Wikipedia language"></select>' +
+        '<input class="wc-d-input wc-newdoc-q" type="text" placeholder="Search Wikipedia" dir="auto" autocomplete="off" spellcheck="false"></div>' +
+        '<div class="wc-newdoc-res"></div>' +
+        '<div class="wc-d-row"><button class="wc-d-no">Cancel</button></div></div>';
+      shade.querySelector('p b').textContent = target.name;
+      const sel = shade.querySelector('.wc-newdoc-lang');
+      [...(langSel ? langSel.options : [])].forEach((o) => sel.appendChild(new Option(o.textContent, o.value)));
+      sel.value = WC_LANG;
+      const qEl = shade.querySelector('.wc-newdoc-q');
+      const resEl = shade.querySelector('.wc-newdoc-res');
+      let timer = 0;
+      const close = () => { clearTimeout(timer); shade.remove(); };
+      const pick = (title) => { const lg = sel.value; close(); createDoc(target, title, lg); };
+      shade.querySelector('.wc-d-no').addEventListener('click', close);
+      shade.addEventListener('pointerdown', (e) => { if (e.target === shade) close(); });
+
+      let token = 0;
+      const run = async () => {
+        const term = qEl.value.trim();
+        resEl.replaceChildren();
+        if (!term) return;
+        const my = ++token;
+        try {
+          const j = await getJSON('https://' + sel.value + '.wikipedia.org/w/api.php?action=opensearch&search=' +
+            encodeURIComponent(term) + '&limit=8&namespace=0&format=json');
+          if (my !== token) return;
+          const titles = (j && j[1]) || [];
+          if (!titles.length) {
+            const p = document.createElement('div');
+            p.className = 'wc-newdoc-none';
+            p.textContent = 'No article found.';
+            resEl.appendChild(p);
+            return;
+          }
+          titles.forEach((t) => {
+            const b = document.createElement('button');
+            b.className = 'wc-newdoc-item';
+            b.textContent = t;
+            b.dir = 'auto';
+            b.addEventListener('click', () => pick(t));
+            resEl.appendChild(b);
+          });
+        } catch (e) {
+          if (my !== token) return;
+          const p = document.createElement('div');
+          p.className = 'wc-newdoc-none';
+          p.textContent = 'Search failed: ' + ((e && e.message) || e);
+          resEl.appendChild(p);
+        }
+      };
+      sel.addEventListener('change', () => { if (qEl.value.trim()) run(); });
+      qEl.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(run, 260); });
+      qEl.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          clearTimeout(timer);
+          const first = resEl.querySelector('.wc-newdoc-item');
+          if (first) pick(first.textContent); else run();
+        } else if (e.key === 'Escape') { e.preventDefault(); close(); }
+      });
+      document.body.appendChild(shade);
+      qEl.focus();
+    }
+
+    async function createDoc(folder, title, lang) {
+      const doc = { id: uid('d_'), title, lang, addedAt: Date.now(), openedAt: 0 };
+      folder.docs.push(doc);
+      library.lastDoc = doc.id;
+      libSave();
+      await openDoc(doc.id);
+      showToast('Added “' + title + '” to ' + folder.name);
+      fetchCover(doc).then(() => applyCover(doc));
+    }
+
+    // ---- open a document: its canvas is its own notebook ----
+    function setDocUI() {
+      const name = state.doc ? state.doc.title : (libOpen() ? 'Library' : 'No document');
+      docNameEl.textContent = name;
+      docNameEl.title = state.doc ? name : '';
+      docNameEl.classList.toggle('wc-docname-set', !!state.doc);
+    }
+
+    async function openDoc(id) {
+      const doc = findDoc(id);
+      if (!doc) return false;
+      closeDocMenu();
+      saveCanvasNow();
+      clearCanvasState();
+      state.doc = doc;
+      doc.openedAt = Date.now();
+      library.lastDoc = id;
+      libSave();
+      if (doc.lang && doc.lang !== WC_LANG) await setLang(doc.lang);
+      hideLibrary();
+      setDocUI();
+      await loadCanvas();
+      if (!state.cards.length && !state.notes.length) {
+        const r = vp.getBoundingClientRect();
+        const c = screenToWorld(r.left + r.width / 2, r.top + r.height / 2);
+        const p = freeSpot(c.x - 210, c.y - 240, 420, 480);
+        createCard({ title: doc.title, x: p.x, y: p.y, w: 420, h: 480, lang: doc.lang });
+      }
+      scheduleMarks();
+      return true;
+    }
+
+    function showLibrary() {
+      if (state.doc) saveCanvasNow();
+      if (state.full) exitFull(false);
+      libEl.hidden = false;
+      state.libraryOn = true;
+      root.classList.add('wc-libon');
+      setDocUI();
+      renderLibrary();
+      liSync();
+      libSearchEl.focus({ preventScroll: true });
+    }
+    function hideLibrary() {
+      if (libEl.hidden && !state.libraryOn) return;
+      libEl.hidden = true;
+      state.libraryOn = false;
+      root.classList.remove('wc-libon');
+      closeDocMenu();
+      setDocUI();
+    }
+
+    // ---- library events ----
+    function liSync() {
+      const f = libFolder === 'all' ? null : folderById(libFolder);
+      libRenFolderEl.hidden = !f;
+      libDelFolderEl.hidden = !f;
+      root.querySelector('.wc-lib-nav[data-folder="all"]').classList.toggle('on', libFolder === 'all');
+      [...libFoldersEl.children].forEach((b) => b.classList.toggle('on', b.dataset.folder === libFolder));
+    }
+    root.querySelector('.wc-lib-side').addEventListener('click', (e) => {
+      const nav = e.target.closest('.wc-lib-nav');
+      if (nav) { libFolder = nav.dataset.folder; libSearchEl.value = ''; renderLibrary(); liSync(); return; }
+      if (e.target.closest('.wc-lib-newfolder')) newFolder();
+    });
+    libGridEl.addEventListener('click', (e) => {
+      const menu = e.target.closest('.wc-doc-menu');
+      const card = e.target.closest('.wc-doc');
+      if (!card) return;
+      const doc = findDoc(card.dataset.id);
+      const folder = folderOfDoc(card.dataset.id);
+      if (!doc) return;
+      if (menu) openDocMenu(menu, folder, doc);
+      else openDoc(doc.id);
+    });
+    libEl.addEventListener('pointerdown', (e) => {
+      if (!e.target.closest('.wc-doc-pop') && !e.target.closest('.wc-doc-menu')) closeDocMenu();
+    });
+    libSearchEl.addEventListener('input', () => renderLibrary());
+    libSortEl.addEventListener('change', () => renderLibrary());
+    root.querySelector('.wc-lib-newdoc').addEventListener('click', newDocument);
+    root.querySelector('.wc-lib-back').addEventListener('click', () => {
+      if (library.lastDoc && findDoc(library.lastDoc)) openDoc(library.lastDoc);
+      else if (state.doc) hideLibrary();
+      else newDocument();
+    });
+    libRenFolderEl.addEventListener('click', () => { const f = folderById(libFolder); if (f) renameFolder(f); });
+    libDelFolderEl.addEventListener('click', () => { const f = folderById(libFolder); if (f) deleteFolder(f); });
+    libEl.addEventListener('keydown', (e) => { if (e.key === 'Escape' && e.target === libSearchEl) { libSearchEl.value = ''; renderLibrary(); } });
+
+    // migrate the single per-language canvas into one document per language
+    function migrateLibrary(all) {
+      const lib = { v: 1, folders: [], lastDoc: null };
+      const codes = [...(langSel ? langSel.options : [])].map((o) => o.value);
+      codes.forEach((lg) => {
+        const data = all && all['canvas_' + lg];
+        if (!data || (!(data.cards && data.cards.length) && !(data.notes && data.notes.length))) return;
+        const name = langLabel(lg);
+        let f = lib.folders.find((x) => x.name === name);
+        if (!f) { f = { id: uid('f_'), name, createdAt: Date.now(), docs: [] }; lib.folders.push(f); }
+        const first = (data.cards && data.cards[0] && data.cards[0].t) || ('My canvas (' + lg + ')');
+        const d = { id: lg, title: first, lang: lg, addedAt: Date.now(), openedAt: Date.now() };
+        f.docs.push(d);
+        lib.lastDoc = d.id;
+      });
+      if (!lib.folders.length) {
+        lib.folders.push({ id: uid('f_'), name: 'Documents', createdAt: Date.now(), docs: [] });
+      }
+      return lib;
+    }
 
     // ---------- first paint ----------
     applyView();
     setLangUI();
-    WCStore.kvAll().then((all) => {
-      const sLang = all && all.settings && all.settings.lang;
-      if (sLang && sLang !== WC_LANG && langSel && langSel.querySelector(`option[value="${sLang}"]`)) {
-        switchLang(sLang);
-      } else {
-        loadCanvas();
+    setDocUI();
+    WCStore.kvAll().then(async (all) => {
+      library = (all && all.library && Array.isArray(all.library.folders)) ? all.library : migrateLibrary(all);
+      libSave();
+      const sLang = (all && all.settings && all.settings.lang) || WC_LANG;
+      if (sLang !== WC_LANG) await setLang(sLang);
+      // the library is the first thing you see; the last notebook loads behind it
+      libEl.hidden = false;
+      state.libraryOn = true;
+      root.classList.add('wc-libon');
+      setDocUI();
+      renderLibrary();
+      if (library.lastDoc) {
+        const d = findDoc(library.lastDoc);
+        if (d) { state.doc = d; setDocUI(); loadCanvas().catch(() => {}); }
       }
-    }).catch(() => {});
+    }).catch(() => {
+      libEl.hidden = false;
+      state.libraryOn = true;
+      renderLibrary();
+    });
   }
 })();
