@@ -2008,13 +2008,15 @@
         const auto = PAD_COLORS[pad.rec.color].text;
         let sx = 0, sy = 0, f = 1, lastT = 0;
 
-        // add a point: a little stabilizer follows the pointer slightly behind (hand shake is smoothed out);
-        // width comes from pen pressure, or from speed for a mouse / finger (slower = a touch thicker, like ink)
+        // add a point. A pen follows the tip exactly (no lag — a stabilizer here is what made it feel
+        // sluggish next to Xournal++); a mouse / finger still gets a light stabilizer, because their
+        // raw samples are coarse and jumpy.
+        // Width comes from pen pressure, or from speed for a mouse / finger (slower = thicker, like ink).
         const add = (ev, first, k) => {
           const r = cv.getBoundingClientRect();
           const sc = viewScale(c);
           const rx = (ev.clientX - r.left) / sc, ry = (ev.clientY - r.top) / sc;
-          const gain = k || (ev.pointerType === 'pen' ? 0.72 : 0.55);
+          const gain = k || (ev.pointerType === 'pen' ? 1 : ev.pointerType === 'mouse' ? 0.85 : 0.65);
           const x = first ? rx : sx + (rx - sx) * gain, y = first ? ry : sy + (ry - sy) * gain;
           const dist = Math.hypot(x - sx, y - sy);
           if (!first && dist < 0.4) return;                          // ignore jitter
@@ -2424,7 +2426,7 @@
           const r = cv.getBoundingClientRect();
           const sc = viewScale(c);
           const rx = (ev.clientX - r.left) / sc, ry = (ev.clientY - r.top) / sc;
-          const gain = k || (ev.pointerType === 'pen' ? 0.72 : 0.55);
+          const gain = k || (ev.pointerType === 'pen' ? 1 : ev.pointerType === 'mouse' ? 0.85 : 0.65);
           const x = first ? rx : sx + (rx - sx) * gain, y = first ? ry : sy + (ry - sy) * gain;
           const dist = Math.hypot(x - sx, y - sy);
           if (!first && dist < 0.4) return;
