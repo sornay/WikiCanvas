@@ -185,6 +185,26 @@
       });
     }
 
+    // ---------- icons (Lucide, ISC) ----------
+    // Inlined so there is no CDN request and the strict CSP stays as it is.
+    const LU = {
+      pencil: '<path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/>',
+      penLine: '<path d="M12 20h9"/><path d="M16.376 3.622a1 1 0 0 1 3.002 3.002L7.368 18.635a2 2 0 0 1-.855.506l-2.872.838a.5.5 0 0 1-.62-.62l.838-2.872a2 2 0 0 1 .506-.854z"/>',
+      eraser: '<path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21"/><path d="M22 21H7"/><path d="m5 11 9 9"/>',
+      eraserStroke: '<path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21"/><path d="M22 21H7"/><path d="M4 3 20 19"/>',
+      undo: '<path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5a5.5 5.5 0 0 1-5.5 5.5H11"/>',
+      redo: '<path d="m15 14 5-5-5-5"/><path d="M20 9H9.5A5.5 5.5 0 0 0 4 14.5A5.5 5.5 0 0 0 9.5 20H13"/>',
+      trash: '<path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/>',
+      notebookPen: '<path d="M13.4 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7.4"/><path d="M2 6h4"/><path d="M2 10h4"/><path d="M2 14h4"/><path d="M2 18h4"/><path d="M21.378 5.626a1 1 0 1 0-3.004-3.004l-5.01 5.012a2 2 0 0 0-.506.854l-.837 2.87a.5.5 0 0 0 .62.62l2.87-.837a2 2 0 0 0 .854-.506z"/>',
+      library: '<rect width="8" height="18" x="3" y="3" rx="1"/><path d="M7 3v18"/><path d="M20.4 18.9c.2.5-.1 1.1-.6 1.3l-1.9.7c-.5.2-1.1-.1-1.3-.6L11.1 5.1c-.2-.5.1-1.1.6-1.3l1.9-.7c.5-.2 1.1.1 1.3.6Z"/>',
+    };
+    function icon(name, size) {
+      const s = size || 15;
+      return '<svg class="wc-i" viewBox="0 0 24 24" width="' + s + '" height="' + s +
+        '" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+        (LU[name] || '') + '</svg>';
+    }
+
     // ---------- DOM ----------
     const root = document.createElement('div');
     root.id = 'wc-root';
@@ -235,7 +255,7 @@
           <span class="wc-full-title" dir="auto"></span>
           <span class="wc-full-tools">
             <button class="wc-full-notes on" title="Show or hide the notes">Notes</button>
-            <button class="wc-full-pageink" title="Handwrite on the article">✐ Write</button>
+            <button class="wc-full-pageink" title="Handwrite on the article">${icon('penLine')} Write</button>
             <a class="wc-full-ext" target="_blank" rel="noopener" title="Open on Wikipedia">↗</a>
           </span>
         </header>
@@ -767,8 +787,8 @@
           <span class="wc-title" dir="auto"></span>
           <span class="wc-tools">
             <button class="wc-fullbtn" title="Open in full view (article + notes)">⤢</button>
-            <button class="wc-padbtn wc-lab" title="Notes: typed or handwritten notes for this article"><i>✎</i>Notes</button>
-            <button class="wc-pageinkbtn wc-lab" title="Handwrite on the article"><i>✐</i>Write</button>
+            <button class="wc-padbtn wc-lab" title="Notes: typed or handwritten notes for this article">${icon('notebookPen')}Notes</button>
+            <button class="wc-pageinkbtn wc-lab" title="Handwrite on the article">${icon('penLine')}Write</button>
             <button class="wc-minbtn" title="Minimize to a name">–</button>
             <a class="wc-ext" target="_blank" rel="noopener" title="Open on Wikipedia">↗</a>
             <button class="wc-close" title="Close (Shift+click: also close cards opened from it)">×</button>
@@ -2281,9 +2301,9 @@
       const size = (v, px, label) =>
         `<button class="wc-ink-w" data-w="${v}" title="${label} line"><i style="width:${px}px;height:${px}px"></i></button>`;
       return `
-        <button class="wc-ink-tool on" data-tool="pen" title="Pen"><i>✎</i></button>
-        <button class="wc-ink-tool" data-tool="eraser" title="Pixel eraser: rubs out parts of strokes"><i>⌫</i></button>
-        <button class="wc-ink-tool" data-tool="stroke" title="Stroke eraser: removes whole strokes"><i>⊘</i></button>
+        <button class="wc-ink-tool on" data-tool="pen" title="Pen">${icon('pencil')}</button>
+        <button class="wc-ink-tool" data-tool="eraser" title="Eraser: rubs out parts of strokes">${icon('eraser')}</button>
+        <button class="wc-ink-tool" data-tool="stroke" title="Stroke eraser: removes whole strokes">${icon('eraserStroke')}</button>
         <span class="wc-sep"></span>
         <span class="wc-ink-colors" title="Pen color"></span>
         <span class="wc-sep"></span>
@@ -2292,9 +2312,9 @@
         ${size(6, 8, 'Bold')}
         ${size(12, 12, 'Marker')}
         <span class="wc-sep"></span>
-        <button class="wc-ink-undo" title="Undo (Ctrl+Z)"><i>↶</i></button>
-        <button class="wc-ink-redo" title="Redo (Ctrl+Y)"><i>↷</i></button>
-        <button class="wc-ink-clear" title="Erase all handwriting"><i>⌦</i></button>`;
+        <button class="wc-ink-undo" title="Undo (Ctrl+Z)">${icon('undo')}</button>
+        <button class="wc-ink-redo" title="Redo (Ctrl+Y)">${icon('redo')}</button>
+        <button class="wc-ink-clear" title="Erase all handwriting">${icon('trash')}</button>`;
     }
 
     function createPageInk(c) {

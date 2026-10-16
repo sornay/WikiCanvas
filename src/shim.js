@@ -81,6 +81,33 @@
     return realFetch(url, opts);
   };
 
+  // ---------- styled text prompt (uses .wc-dialog CSS) ----------
+  window.wcPrompt = function (msg, value, okLabel) {
+    return new Promise((resolve) => {
+      const shade = document.createElement('div');
+      shade.className = 'wc-dialog-shade';
+      shade.innerHTML = '<div class="wc-dialog" role="dialog"><p></p>' +
+        '<input class="wc-d-input" type="text" autocomplete="off" spellcheck="false" dir="auto">' +
+        '<div class="wc-d-row"><button class="wc-d-no">Cancel</button>' +
+        '<button class="wc-d-yes"></button></div></div>';
+      shade.querySelector('p').textContent = msg;
+      shade.querySelector('.wc-d-yes').textContent = okLabel || 'OK';
+      const inp = shade.querySelector('.wc-d-input');
+      inp.value = value || '';
+      const done = (v) => { shade.remove(); resolve(v); };
+      shade.querySelector('.wc-d-no').addEventListener('click', () => done(null));
+      shade.querySelector('.wc-d-yes').addEventListener('click', () => done(inp.value.trim() || null));
+      inp.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); done(inp.value.trim() || null); }
+        else if (e.key === 'Escape') { e.preventDefault(); done(null); }
+      });
+      shade.addEventListener('pointerdown', (e) => { if (e.target === shade) done(null); });
+      document.body.appendChild(shade);
+      inp.focus();
+      inp.select();
+    });
+  };
+
   // ---------- styled confirm dialog (uses .wc-dialog CSS) ----------
   window.wcConfirm = function (msg) {
     return new Promise((resolve) => {

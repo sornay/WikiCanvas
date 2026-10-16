@@ -216,6 +216,7 @@ html.wc-on, html.wc-on body { overflow: hidden !important; }
   white-space: nowrap;
 }
 .wc-tools .wc-lab i { font-style: normal; font-size: 14px; line-height: 1; }
+.wc-tools .wc-lab .wc-i { width: 15px; height: 15px; }
 .wc-tools .wc-lab:hover { color: var(--ink); }
 .wc-close:hover { color: #c0392b !important; }
 
@@ -533,6 +534,9 @@ html.wc-on, html.wc-on body { overflow: hidden !important; }
   font-size: 15px;
   line-height: 1;
 }
+/* icon buttons carry an inline SVG instead of a text glyph */
+.wc-ink-tool .wc-i, .wc-ink-undo .wc-i, .wc-ink-redo .wc-i, .wc-ink-clear .wc-i { display: block; }
+.wc-ink-tool .wc-i { width: 16px; height: 16px; }
 .wc-ink-tool:hover, .wc-ink-w:hover, .wc-ink-undo:hover, .wc-ink-redo:hover, .wc-ink-clear:hover { background: rgba(127, 127, 127, .2); }
 .wc-ink-tool.on, .wc-ink-w.on { background: var(--pt); color: var(--pb); border-color: var(--pt); }
 .wc-ink-w i { display: block; border-radius: 50%; background: currentColor; }
@@ -678,6 +682,7 @@ html.wc-on, html.wc-on body { overflow: hidden !important; }
 }
 .wc-full-tools button:hover, .wc-full-tools a:hover { border-color: var(--accent); color: var(--accent); }
 .wc-full-tools button.on { background: #e6f5f3; border-color: var(--accent); color: var(--accent); }
+.wc-full-tools .wc-full-pageink { gap: 6px; }
 .wc-full-main { flex: 1; min-height: 0; display: flex; }
 .wc-full-main.wc-notes-left { flex-direction: row-reverse; }
 .wc-full-article { flex: 1; min-width: 0; display: flex; background: #fffefb; }
@@ -959,6 +964,19 @@ html, body { margin: 0; height: 100%; background: #eceae3; }
   font: 14px/1.5 -apple-system, "Segoe UI", sans-serif;
 }
 .wc-dialog p { margin: 0 0 16px; }
+.wc-d-input {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0 0 16px;
+  padding: 8px 10px;
+  border: 1px solid #d3cfc1;
+  border-radius: 8px;
+  background: #fff;
+  color: #222;
+  font: inherit;
+}
+.wc-d-input:focus { outline: 2px solid #0d9488; outline-offset: -1px; border-color: #0d9488; }
 .wc-d-row { display: flex; justify-content: flex-end; gap: 8px; }
 .wc-dialog button {
   padding: 7px 18px;
