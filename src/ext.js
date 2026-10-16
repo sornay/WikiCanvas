@@ -767,8 +767,8 @@
           <span class="wc-title" dir="auto"></span>
           <span class="wc-tools">
             <button class="wc-fullbtn" title="Open in full view (article + notes)">⤢</button>
-            <button class="wc-padbtn" title="Notes: typed or handwritten notes for this article">✎</button>
-            <button class="wc-pageinkbtn" title="Handwrite on the article">✐</button>
+            <button class="wc-padbtn wc-lab" title="Notes: typed or handwritten notes for this article"><i>✎</i>Notes</button>
+            <button class="wc-pageinkbtn wc-lab" title="Handwrite on the article"><i>✐</i>Write</button>
             <button class="wc-minbtn" title="Minimize to a name">–</button>
             <a class="wc-ext" target="_blank" rel="noopener" title="Open on Wikipedia">↗</a>
             <button class="wc-close" title="Close (Shift+click: also close cards opened from it)">×</button>
@@ -2274,26 +2274,25 @@
       if (pi.bar.parentElement !== host) host.appendChild(pi.bar);
     }
 
-    // one labeled toolbar shared by the notes pad and the article overlay
+    // one toolbar shared by the notes pad and the article overlay
     function inkToolsHTML() {
-      const size = (v, px, cap) =>
-        `<button class="wc-ink-w" data-w="${v}" title="${cap} line">` +
-        `<i style="width:${px}px;height:${px}px"></i><b>${cap}</b></button>`;
+      const size = (v, px, label) =>
+        `<button class="wc-ink-w" data-w="${v}" title="${label} line"><i style="width:${px}px;height:${px}px"></i></button>`;
       return `
-        <button class="wc-ink-tool on" data-tool="pen" title="Pen"><i>✎</i><b>Pen</b></button>
-        <button class="wc-ink-tool" data-tool="eraser" title="Pixel eraser: rubs out parts of strokes"><i>⌫</i><b>Eraser</b></button>
-        <button class="wc-ink-tool" data-tool="stroke" title="Stroke eraser: removes whole strokes"><i>⊘</i><b>Stroke</b></button>
+        <button class="wc-ink-tool on" data-tool="pen" title="Pen"><i>✎</i></button>
+        <button class="wc-ink-tool" data-tool="eraser" title="Pixel eraser: rubs out parts of strokes"><i>⌫</i></button>
+        <button class="wc-ink-tool" data-tool="stroke" title="Stroke eraser: removes whole strokes"><i>⊘</i></button>
         <span class="wc-sep"></span>
         <span class="wc-ink-colors" title="Pen color"></span>
         <span class="wc-sep"></span>
         ${size(1.5, 3, 'Fine')}
-        <button class="wc-ink-w on" data-w="3" title="Medium line"><i style="width:5px;height:5px"></i><b>Med</b></button>
+        <button class="wc-ink-w on" data-w="3" title="Medium line"><i style="width:5px;height:5px"></i></button>
         ${size(6, 8, 'Bold')}
         ${size(12, 12, 'Marker')}
         <span class="wc-sep"></span>
-        <button class="wc-ink-undo" title="Undo (Ctrl+Z)"><i>↶</i><b>Undo</b></button>
-        <button class="wc-ink-redo" title="Redo (Ctrl+Y)"><i>↷</i><b>Redo</b></button>
-        <button class="wc-ink-clear" title="Erase all handwriting"><i>⌦</i><b>Clear</b></button>`;
+        <button class="wc-ink-undo" title="Undo (Ctrl+Z)"><i>↶</i></button>
+        <button class="wc-ink-redo" title="Redo (Ctrl+Y)"><i>↷</i></button>
+        <button class="wc-ink-clear" title="Erase all handwriting"><i>⌦</i></button>`;
     }
 
     function createPageInk(c) {

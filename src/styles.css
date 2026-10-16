@@ -205,6 +205,18 @@ html.wc-on, html.wc-on body { overflow: hidden !important; }
   cursor: pointer;
 }
 .wc-tools a:hover, .wc-tools button:hover { background: rgba(0,0,0,.07); color: var(--ink); }
+/* the buttons that open the notes and the writing on the article carry a text label */
+.wc-tools .wc-lab {
+  width: auto;
+  min-width: 0;
+  height: 26px;
+  padding: 0 9px;
+  gap: 5px;
+  font: 600 12px/1 -apple-system, "Segoe UI", sans-serif;
+  white-space: nowrap;
+}
+.wc-tools .wc-lab i { font-style: normal; font-size: 14px; line-height: 1; }
+.wc-tools .wc-lab:hover { color: var(--ink); }
 .wc-close:hover { color: #c0392b !important; }
 
 /* minimized: just the name */
@@ -505,15 +517,12 @@ html.wc-on, html.wc-on body { overflow: hidden !important; }
 .wc-ink-c.on { outline: 2px solid var(--pt); outline-offset: 1px; }
 .wc-ink-tool, .wc-ink-w, .wc-ink-undo, .wc-ink-redo, .wc-ink-clear {
   display: inline-flex;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 1px;
-  min-width: 42px;
-  height: 38px;
-  padding: 3px 6px;
+  min-width: 26px; height: 24px;
+  padding: 0 5px;
   border: 1px solid var(--pbd);
-  border-radius: 7px;
+  border-radius: 6px;
   background: transparent;
   color: var(--pt);
   font: 14px/1 sans-serif;
@@ -524,15 +533,8 @@ html.wc-on, html.wc-on body { overflow: hidden !important; }
   font-size: 15px;
   line-height: 1;
 }
-/* the little caption under each handwriting icon */
-.wc-ink-tool b, .wc-ink-w b, .wc-ink-undo b, .wc-ink-redo b, .wc-ink-clear b {
-  font: 500 9px/1 -apple-system, "Segoe UI", sans-serif;
-  letter-spacing: .3px;
-  opacity: .8;
-}
 .wc-ink-tool:hover, .wc-ink-w:hover, .wc-ink-undo:hover, .wc-ink-redo:hover, .wc-ink-clear:hover { background: rgba(127, 127, 127, .2); }
 .wc-ink-tool.on, .wc-ink-w.on { background: var(--pt); color: var(--pb); border-color: var(--pt); }
-.wc-ink-tool.on b, .wc-ink-w.on b { opacity: 1; }
 .wc-ink-w i { display: block; border-radius: 50%; background: currentColor; }
 
 .wc-pad-body { position: relative; flex: 1; min-height: 0; }
@@ -991,7 +993,7 @@ html, body { margin: 0; height: 100%; background: #eceae3; }
 /* handwriting on the article itself */
 .wc-body { position: relative; }
 .wc-pageink { position: absolute; left: 0; top: 0; z-index: 5; display: none; touch-action: none; }
-.wc-pageink.on { display: block; cursor: crosshair; }
+.wc-pageink.on { display: block; cursor: none; }
 /* pointer dot on the article (matches the notes pad) */
 .wc-pageink-brush {
   position: absolute;
